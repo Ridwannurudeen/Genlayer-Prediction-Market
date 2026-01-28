@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Calendar, DollarSign, Loader2, Sparkles, Share2, Bookmark, Info, Users, ExternalLink, Zap, AlertTriangle, Coins } from "lucide-react";
+import { ArrowLeft, Calendar, DollarSign, Loader2, Sparkles, Share2, Bookmark, Info, Users, ExternalLink, Zap, AlertTriangle, Coins, RefreshCw } from "lucide-react";
 import { Header } from "@/components/Header";
 import { AIInsightCard } from "@/components/AIInsightCard";
 import { MarketChart } from "@/components/MarketChart";
@@ -41,7 +41,7 @@ const formatDate = (dateString: string): string => {
 
 const MarketDetail = () => {
   const { id } = useParams();
-  const { data: market, isLoading } = useMarket(id || "");
+  const { data: market, isLoading, refetch: refetchMarket } = useMarket(id || "");
   const { analyzeMarket, isAnalyzing, creditsExhausted } = useMarketAnalysis();
   const createTrade = useCreateTrade();
   const { buyShares, isPending: isBlockchainPending, isOnBase, readMarketData, getUserPosition } = useBaseTrading();
@@ -53,36 +53,82 @@ const MarketDetail = () => {
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [useBlockchain, setUseBlockchain] = useState(true);
   const [selectedToken, setSelectedToken] = useState<TradingToken>("ETH");
-  const [onChainData, setOnChainData] = useState<{ yesShares: string; noShares: string; isResolved?: boolean; winner?: number | null } | null>(null);
+  const [onChainData, setOnChainData] = useState<{ 
+    yesPool: string; 
+    noPool: string; 
+    isResolved?: boolean; 
+    winner?: number | null 
+  } | null>(null);
   const [userPosition, setUserPosition] = useState<{ yesShares: string; noShares: string } | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Fetch on-chain data if market has a Base contract
+  // Function to refresh on-chain data
+  const refreshOnChainData = useCallback(async () => {
+    if (!market?.base_contract_address) return;
+    
+    setIsRefreshing(true);
+    console.log("Refreshing on-chain data for:", market.base_contract_address);
+    
+    try {
+      const data = await readMarketData(market.base_contract_address);
+      console.log("Read market data result:", data);
+      
+      if (data) {
+        setOnChainData({
+          yesPool: data.yesShares || "0",
+          noPool: data.noShares || "0",
+          isResolved: data.isResolved,
+          winner: data.winner,
+        });
+        console.log("Updated pools - Yes:", data.yesShares, "No:", data.noShares);
+      }
+    } catch (err) {
+      console.error("Failed to read market data:", err);
+    }
+
+    try {
+      const pos = await getUserPosition(market.base_contract_address);
+      console.log("User position:", pos);
+      if (pos) setUserPosition(pos);
+    } catch (err) {
+      console.error("Failed to get user position:", err);
+    }
+    
+    setIsRefreshing(false);
+  }, [market?.base_contract_address, readMarketData, getUserPosition]);
+
+  // Fetch on-chain data on mount and when contract changes
   useEffect(() => {
     if (market?.base_contract_address && isConnected) {
-      readMarketData(market.base_contract_address)
-        .then((data) => {
-          if (data) {
-            setOnChainData({
-              yesShares: data.yesShares || "0",
-              noShares: data.noShares || "0",
-              isResolved: data.isResolved,
-              winner: data.winner,
-            });
-          }
-        })
-        .catch((err) => {
-          console.error("Failed to read market data:", err);
-        });
-
-      getUserPosition(market.base_contract_address)
-        .then((pos) => {
-          if (pos) setUserPosition(pos);
-        })
-        .catch((err) => {
-          console.error("Failed to get user position:", err);
-        });
+      refreshOnChainData();
     }
-  }, [market?.base_contract_address, isConnected, readMarketData, getUserPosition]);
+  }, [market?.base_contract_address, isConnected, refreshOnChainData]);
+
+  // Calculate live probability from on-chain pool data
+  const calculateProbability = useCallback(() => {
+    if (onChainData) {
+      const yesPool = parseFloat(onChainData.yesPool || "0");
+      const noPool = parseFloat(onChainData.noPool || "0");
+      const totalPool = yesPool + noPool;
+      
+      console.log("Calculating probability - Yes Pool:", yesPool, "No Pool:", noPool, "Total:", totalPool);
+      
+      if (totalPool > 0) {
+        // Probability based on pool ratio
+        const prob = Math.round((noPool / totalPool) * 100);
+        // When more YES is bought, noPool becomes smaller relative to total, so YES probability goes up
+        // Actually: YES price = noPool / totalPool (lower noPool = cheaper YES = more likely)
+        // So YES probability = 100 - (noPool / totalPool * 100) = yesPool / totalPool * 100
+        const yesProb = Math.round((yesPool / totalPool) * 100);
+        console.log("Calculated YES probability:", yesProb);
+        return Math.max(1, Math.min(99, yesProb)); // Clamp between 1-99
+      }
+    }
+    // Fallback to database value
+    return Number(market?.probability) || 50;
+  }, [onChainData, market?.probability]);
+
+  const probability = calculateProbability();
 
   const handleAnalyze = async () => {
     if (!market) return;
@@ -90,7 +136,7 @@ const MarketDetail = () => {
     const result = await analyzeMarket({
       id: market.id,
       title: market.title,
-      probability: Number(market.probability) || 50,
+      probability: probability,
       volume: Number(market.volume) || 0,
       category: market.category,
     });
@@ -116,7 +162,6 @@ const MarketDetail = () => {
       return;
     }
 
-    const probability = Number(market.probability) || 50;
     const price = selectedOutcome === "yes" 
       ? probability / 100 
       : (100 - probability) / 100;
@@ -133,6 +178,7 @@ const MarketDetail = () => {
         });
         
         if (result.success) {
+          // Record in database for portfolio tracking
           await createTrade.mutateAsync({
             marketId: market.id,
             positionType: selectedOutcome,
@@ -140,24 +186,13 @@ const MarketDetail = () => {
             price,
           });
           
-          readMarketData(market.base_contract_address)
-            .then((data) => {
-              if (data) {
-                setOnChainData({
-                  yesShares: data.yesShares || "0",
-                  noShares: data.noShares || "0",
-                  isResolved: data.isResolved,
-                  winner: data.winner,
-                });
-              }
-            })
-            .catch(console.error);
-
-          getUserPosition(market.base_contract_address)
-            .then((pos) => {
-              if (pos) setUserPosition(pos);
-            })
-            .catch(console.error);
+          // Wait a moment for blockchain state to update
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Refresh on-chain data to update odds
+          await refreshOnChainData();
+          
+          toast.success(`Bought ${selectedOutcome.toUpperCase()} shares! Odds updated.`);
         }
       } else {
         await createTrade.mutateAsync({
@@ -212,7 +247,6 @@ const MarketDetail = () => {
     );
   }
 
-  const probability = Number(market.probability) || 50;
   const potentialReturn = amount && parseFloat(amount) > 0
     ? (parseFloat(amount) / (selectedOutcome === "yes" ? probability : 100 - probability) * 100).toFixed(2) 
     : "0.00";
@@ -370,33 +404,59 @@ const MarketDetail = () => {
                       <Zap className="h-4 w-4 text-blue-500" />
                       <span className="text-xs font-medium">Base Sepolia Trading</span>
                     </div>
-                    {isOnBase ? (
-                      <Badge variant="outline" className="text-xs text-blue-600 border-blue-500/30">
-                        Connected
-                      </Badge>
-                    ) : (
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        className="h-6 text-xs"
-                        onClick={switchToBase}
+                    <div className="flex items-center gap-2">
+                      {isOnBase ? (
+                        <Badge variant="outline" className="text-xs text-blue-600 border-blue-500/30">
+                          Connected
+                        </Badge>
+                      ) : (
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-6 text-xs"
+                          onClick={switchToBase}
+                        >
+                          Switch to Base
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 w-6 p-0"
+                        onClick={refreshOnChainData}
+                        disabled={isRefreshing}
                       >
-                        Switch to Base
+                        <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
                       </Button>
-                    )}
-                  </div>
-                  {onChainData && (
-                    <div className="mt-2 pt-2 border-t border-border/50 grid grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <span className="text-muted-foreground">Yes Pool:</span>
-                        <span className="ml-1 font-medium">{parseFloat(onChainData.yesShares || "0").toFixed(4)} ETH</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">No Pool:</span>
-                        <span className="ml-1 font-medium">{parseFloat(onChainData.noShares || "0").toFixed(4)} ETH</span>
-                      </div>
                     </div>
-                  )}
+                  </div>
+                  
+                  {/* Pool Data */}
+                  <div className="mt-2 pt-2 border-t border-border/50 grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-muted-foreground">Yes Pool:</span>
+                      <span className="ml-1 font-medium text-yes">
+                        {parseFloat(onChainData?.yesPool || "0").toFixed(4)} ETH
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">No Pool:</span>
+                      <span className="ml-1 font-medium text-no">
+                        {parseFloat(onChainData?.noPool || "0").toFixed(4)} ETH
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Contract Address */}
+                  <div className="mt-2 pt-2 border-t border-border/50 text-xs text-muted-foreground">
+                    Contract: {market.base_contract_address?.slice(0, 10)}...{market.base_contract_address?.slice(-6)}
+                    <ExternalLink 
+                      className="h-3 w-3 inline ml-1 cursor-pointer hover:text-foreground" 
+                      onClick={() => window.open(`https://sepolia.basescan.org/address/${market.base_contract_address}`, "_blank")}
+                    />
+                  </div>
+
+                  {/* User Position */}
                   {userPosition && (parseFloat(userPosition.yesShares || "0") > 0 || parseFloat(userPosition.noShares || "0") > 0) && (
                     <div className="mt-2 pt-2 border-t border-border/50 text-xs">
                       <span className="text-muted-foreground">Your Position:</span>
