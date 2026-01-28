@@ -1,20 +1,40 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, Loader2, Zap, AlertTriangle, CheckCircle2, Calendar, Info, Wallet, Rocket } from "lucide-react";
+import { z } from "zod";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useCreateMarket } from "@/hooks/useMarkets";
-import { useMarketFactory } from "@/hooks/useMarketFactory";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
-import { WalletModal } from "@/components/WalletModal";
+import { useContractDeployment } from "@/hooks/useContractDeployment";
+import { useHybridDeployment } from "@/hooks/useHybridDeployment";
+import { DeploymentStatus } from "@/components/DeploymentStatus";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { ArrowLeft, Loader2, Zap, Calendar, Info, Wallet, Rocket, Sparkles, CheckCircle2, XCircle } from "lucide-react";
+import { WalletModal } from "@/components/WalletModal";
 
-const CATEGORIES = [
+const categories = [
   "Crypto",
   "Finance",
   "Tech",
@@ -22,174 +42,148 @@ const CATEGORIES = [
   "World",
   "Sports",
   "Culture",
-  "Other",
 ];
 
-interface FormData {
-  title: string;
-  description: string;
-  category: string;
-  endDate: string;
-  resolutionSource: string;
-  initialProbability: number;
-}
+const marketSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(10, "Title must be at least 10 characters")
+    .max(200, "Title must be less than 200 characters")
+    .refine(
+      (val) => val.endsWith("?"),
+      "Title should be a question (end with ?)"
+    ),
+  description: z
+    .string()
+    .trim()
+    .min(20, "Description must be at least 20 characters")
+    .max(1000, "Description must be less than 1000 characters"),
+  category: z.enum(["Crypto", "Finance", "Tech", "Politics", "World", "Sports", "Culture"], {
+    required_error: "Please select a category",
+  }),
+  endDate: z
+    .string()
+    .refine((val) => {
+      const date = new Date(val);
+      const now = new Date();
+      return date > now;
+    }, "End date must be in the future"),
+  resolutionSource: z
+    .string()
+    .trim()
+    .min(10, "Resolution source must be at least 10 characters")
+    .max(500, "Resolution source must be less than 500 characters"),
+  initialProbability: z
+    .number()
+    .min(1, "Probability must be at least 1%")
+    .max(99, "Probability must be at most 99%"),
+});
+
+type MarketFormData = z.infer<typeof marketSchema>;
 
 const CreateMarket = () => {
   const navigate = useNavigate();
-  const createMarket = useCreateMarket();
-  const { deployMarket, isDeploying, isOnBase } = useMarketFactory();
-  const { isConnected, address, loading, switchToBase } = useWalletAuth();
-  
+  const { isConnected, address, loading, chainId, switchToGenLayer } = useWalletAuth();
+  const isOnGenLayer = chainId === 4221;
+  const isOnBase = chainId === 84532;
+  const { deployPredictionMarket, status: deploymentStatus, resetStatus, isDeploying } = useContractDeployment();
+  const { deployHybrid, isDeploying: isHybridDeploying, baseStep, genLayerStep, resetSteps, switchToBase } = useHybridDeployment();
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
-  const [deployOnChain, setDeployOnChain] = useState(true);
-  const [formData, setFormData] = useState<FormData>({
-    title: "",
-    description: "",
-    category: "Other",
-    endDate: "",
-    resolutionSource: "",
-    initialProbability: 50,
+  const [deployOnChain, setDeployOnChain] = useState(true); // GenLayer
+  const [deployToBaseSepolia, setDeployToBaseSepolia] = useState(true); // Base Sepolia
+
+  const form = useForm<MarketFormData>({
+    resolver: zodResolver(marketSchema),
+    defaultValues: {
+      title: "",
+      description: "",
+      category: undefined,
+      endDate: "",
+      resolutionSource: "",
+      initialProbability: 50,
+    },
   });
 
-  // Calculate minimum date (tomorrow)
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const minDate = tomorrow.toISOString().split("T")[0];
-
-  const validateForm = (): boolean => {
-    if (!formData.title.trim()) {
-      toast.error("Please enter a market title");
-      return false;
-    }
-    if (formData.title.length < 10) {
-      toast.error("Title must be at least 10 characters");
-      return false;
-    }
-    if (!formData.title.endsWith("?")) {
-      toast.error("Title should be a question (end with ?)");
-      return false;
-    }
-    if (!formData.description.trim()) {
-      toast.error("Please enter a description");
-      return false;
-    }
-    if (formData.description.length < 20) {
-      toast.error("Description must be at least 20 characters");
-      return false;
-    }
-    if (!formData.endDate) {
-      toast.error("Please select an end date");
-      return false;
-    }
-    const endDate = new Date(formData.endDate);
-    if (endDate <= new Date()) {
-      toast.error("End date must be in the future");
-      return false;
-    }
-    return true;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!isConnected) {
+  const onSubmit = async (data: MarketFormData) => {
+    if (!isConnected || !address) {
       setWalletModalOpen(true);
       return;
     }
 
-    if (!validateForm()) {
-      return;
-    }
-
-    // Check network if deploying on-chain
-    if (deployOnChain && !isOnBase) {
-      toast.info("Please switch to Base Sepolia to deploy", {
-        action: {
-          label: "Switch Network",
-          onClick: switchToBase,
-        },
-      });
-      return;
-    }
-
-    // Calculate duration in days from end date
-    const endDate = new Date(formData.endDate);
-    const now = new Date();
-    const durationDays = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (durationDays > 365) {
-      toast.error("Market duration cannot exceed 365 days");
-      return;
-    }
+    setIsSubmitting(true);
+    resetStatus();
+    resetSteps();
 
     try {
-      let contractAddress: string | undefined;
+      let intelligentContractAddress: string | null = null;
+      let baseContractAddress: string | null = null;
 
-      // Step 1: Deploy contract on Base Sepolia (if enabled)
-      if (deployOnChain) {
-        toast.info("Step 1/2: Deploying contract on Base Sepolia...", {
-          description: "Please confirm the transaction in MetaMask",
+      // Deploy to both networks if enabled
+      if (deployOnChain || deployToBaseSepolia) {
+        const result = await deployHybrid({
+          question: data.title,
+          description: data.description,
+          category: data.category,
+          endDate: new Date(data.endDate),
+          resolutionSource: data.resolutionSource,
+          deployBase: deployToBaseSepolia,
+          deployGenLayer: deployOnChain,
         });
-        
-        const deployResult = await deployMarket(
-          formData.title,
-          formData.description || "No description provided",
-          durationDays
-        );
 
-        if (!deployResult.success) {
-          if (deployResult.error === "Cancelled") {
-            return;
-          }
-          toast.error("Contract deployment failed", {
-            description: deployResult.error,
-          });
+        // If both deployments failed, stop
+        if (!result.success && !result.baseContractAddress && !result.genLayerTxHash) {
+          setIsSubmitting(false);
           return;
         }
 
-        contractAddress = deployResult.contractAddress;
-        
-        toast.success("Contract deployed! 🎉", {
-          description: `Address: ${contractAddress?.slice(0, 10)}...${contractAddress?.slice(-6)}`,
-        });
+        baseContractAddress = result.baseContractAddress || null;
+        intelligentContractAddress = result.genLayerTxHash || null;
       }
 
-      // Step 2: Save to database
-      toast.info(deployOnChain ? "Step 2/2: Saving to database..." : "Saving market to database...");
-
-      const newMarket = await createMarket.mutateAsync({
-        title: formData.title,
-        description: formData.description || "No description provided",
-        category: formData.category,
-        end_date: new Date(formData.endDate).toISOString(),
-        resolution_source: formData.resolutionSource || undefined,
-        probability: formData.initialProbability,
-        volume: 0,
-        deployer_wallet: address || null,
-        verified: deployOnChain && !!contractAddress,
-        resolution_status: "active",
+      // Create market record in database
+      const { data: newMarket, error } = await supabase.from("markets").insert({
+        title: data.title,
+        description: data.description,
+        category: data.category,
+        end_date: new Date(data.endDate).toISOString(),
+        resolution_source: data.resolutionSource,
+        probability: data.initialProbability,
+        created_by: address,
+        deployer_wallet: (deployOnChain || deployToBaseSepolia) ? address : null,
+        verified: deployOnChain || deployToBaseSepolia,
+        resolution_status: "open",
         validator_count: deployOnChain ? 5 : 0,
-        consensus_percentage: 0,
-        base_contract_address: contractAddress || null,
-        network: contractAddress ? "base_sepolia" : null,
-      });
+        volume: 0,
+        intelligent_contract_address: intelligentContractAddress,
+        base_contract_address: baseContractAddress,
+        network: deployToBaseSepolia ? "base_sepolia" : (deployOnChain ? "genlayer" : "simulated"),
+      }).select().single();
 
-      toast.success("Market created successfully! 🎉", {
-        description: contractAddress 
-          ? "Your market has a real smart contract on Base Sepolia!"
-          : "Market saved. Deploy a contract later to enable on-chain trading.",
-      });
-      
+      if (error) throw error;
+
+      // Build success message
+      let successMsg = "Market created";
+      if (baseContractAddress) successMsg += " + Base trading";
+      if (deployOnChain) successMsg += " + GenLayer AI";
+      toast.success(successMsg + "!");
+
       navigate(`/market/${newMarket.id}`);
-
     } catch (error: any) {
-      console.error("Create market error:", error);
       toast.error(error.message || "Failed to create market");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const isSubmitting = isDeploying || createMarket.isPending;
+  const handleRetryDeployment = () => {
+    resetStatus();
+    resetSteps();
+    form.handleSubmit(onSubmit)();
+  };
 
+  // Show loading state
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
@@ -203,6 +197,7 @@ const CreateMarket = () => {
     );
   }
 
+  // Prompt to connect wallet
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-background">
@@ -226,11 +221,14 @@ const CreateMarket = () => {
     );
   }
 
+  const isProcessing = isSubmitting || isDeploying || isHybridDeploying;
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
 
       <main className="container py-6 max-w-2xl">
+        {/* Breadcrumb */}
         <Link
           to="/"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-6"
@@ -242,229 +240,325 @@ const CreateMarket = () => {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-primary" />
+              <Zap className="h-5 w-5 text-chart-3" />
               Create Prediction Market
             </CardTitle>
             <CardDescription>
-              Create a new prediction market. Enable on-chain deployment for real blockchain trading.
+              Create a new market with on-chain trading and AI-powered resolution.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Title */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Market Question</label>
-                <Input
-                  placeholder="Will Bitcoin exceed $100,000 by end of 2026?"
-                  value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                  className="h-11"
-                  disabled={isSubmitting}
+            <Form {...form}>
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                {/* Title */}
+                <FormField
+                  control={form.control}
+                  name="title"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Market Question</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Will Bitcoin exceed $100,000 by end of 2026?"
+                          disabled={isProcessing}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        A clear yes/no question that can be objectively resolved.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-                <p className="text-xs text-muted-foreground">
-                  A clear yes/no question ending with "?" (10-200 characters)
-                </p>
-              </div>
 
-              {/* Description */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Resolution Criteria</label>
-                <Textarea
-                  placeholder="Describe exactly how this market will be resolved..."
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="min-h-[100px]"
-                  disabled={isSubmitting}
+                {/* Description */}
+                <FormField
+                  control={form.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Resolution Criteria</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Describe exactly how this market will be resolved. Be specific about data sources, edge cases, and timing..."
+                          className="min-h-[100px]"
+                          disabled={isProcessing}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Clear criteria help validators make accurate resolutions.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Clear criteria help ensure accurate resolution (20-1000 characters)
-                </p>
-              </div>
 
-              {/* Category & End Date */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Category</label>
-                  <Select
-                    value={formData.category}
-                    onValueChange={(value) => setFormData({ ...formData, category: value })}
-                    disabled={isSubmitting}
-                  >
-                    <SelectTrigger className="h-11">
-                      <SelectValue placeholder="Select category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CATEGORIES.map((cat) => (
-                        <SelectItem key={cat} value={cat}>
-                          {cat}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">End Date</label>
-                  <div className="relative">
-                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      type="datetime-local"
-                      value={formData.endDate}
-                      onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                      className="h-11 pl-10"
-                      min={minDate}
-                      disabled={isSubmitting}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Resolution Source */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Data Source for Resolution</label>
-                <Input
-                  placeholder="e.g., CoinGecko API, Official announcement URL"
-                  value={formData.resolutionSource}
-                  onChange={(e) => setFormData({ ...formData, resolutionSource: e.target.value })}
-                  className="h-11"
-                  disabled={isSubmitting}
-                />
-              </div>
-
-              {/* Initial Probability */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Initial Probability (%)</label>
-                <div className="flex items-center gap-4">
-                  <Input
-                    type="number"
-                    min={1}
-                    max={99}
-                    value={formData.initialProbability}
-                    onChange={(e) => setFormData({ 
-                      ...formData, 
-                      initialProbability: Math.min(99, Math.max(1, parseInt(e.target.value) || 50))
-                    })}
-                    className="w-24 h-11"
-                    disabled={isSubmitting}
+                {/* Category & End Date Row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="category"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Category</FormLabel>
+                        <Select 
+                          onValueChange={field.onChange} 
+                          defaultValue={field.value}
+                          disabled={isProcessing}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select category" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {categories.map((cat) => (
+                              <SelectItem key={cat} value={cat}>
+                                {cat}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
                   />
-                  <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-green-500 transition-all"
-                      style={{ width: `${formData.initialProbability}%` }}
-                    />
-                  </div>
-                  <span className="text-sm text-muted-foreground w-12">
-                    {formData.initialProbability}%
-                  </span>
-                </div>
-              </div>
 
-              {/* Deploy On-Chain Toggle */}
-              <div className="p-4 rounded-lg bg-primary/10 border border-primary/20">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-3">
-                    <Rocket className="h-5 w-5 text-primary mt-0.5" />
-                    <div>
-                      <p className="font-medium text-primary mb-1">
-                        Deploy on Base Sepolia
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        Deploy a real smart contract for trustless on-chain trading.
-                      </p>
+                  <FormField
+                    control={form.control}
+                    name="endDate"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>End Date</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input
+                              type="datetime-local"
+                              className="pl-10"
+                              disabled={isProcessing}
+                              {...field}
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* Resolution Source */}
+                <FormField
+                  control={form.control}
+                  name="resolutionSource"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Data Source for Resolution</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g., https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+                          disabled={isProcessing}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        URL or API that the AI will query to verify the outcome.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Initial Probability */}
+                <FormField
+                  control={form.control}
+                  name="initialProbability"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Initial Probability (%)</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center gap-4">
+                          <Input
+                            type="number"
+                            min={1}
+                            max={99}
+                            className="w-24"
+                            disabled={isProcessing}
+                            {...field}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 50)}
+                          />
+                          <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-yes transition-all"
+                              style={{ width: `${field.value}%` }}
+                            />
+                          </div>
+                          <span className="text-sm text-muted-foreground w-12">
+                            {field.value}%
+                          </span>
+                        </div>
+                      </FormControl>
+                      <FormDescription>
+                        Your initial estimate of the probability. Trading will adjust this.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Deployment Options */}
+                <div className="space-y-3">
+                  <p className="text-sm font-medium">Deployment Options</p>
+                  
+                  {/* Base Sepolia Toggle */}
+                  <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <Zap className="h-5 w-5 text-blue-500 mt-0.5" />
+                        <div>
+                          <p className="font-medium text-blue-600 dark:text-blue-400 mb-1">
+                            Base Sepolia Trading
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            Enable real ETH trading with escrowed funds on Base Sepolia.
+                          </p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={deployToBaseSepolia}
+                        onCheckedChange={setDeployToBaseSepolia}
+                        disabled={isProcessing}
+                      />
                     </div>
                   </div>
-                  <Switch
-                    checked={deployOnChain}
-                    onCheckedChange={setDeployOnChain}
-                    disabled={isSubmitting}
-                  />
+
+                  {/* GenLayer Toggle */}
+                  <div className="p-4 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <Sparkles className="h-5 w-5 text-purple-500 mt-0.5" />
+                        <div>
+                          <p className="font-medium text-purple-600 dark:text-purple-400 mb-1">
+                            GenLayer AI Resolution
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            Deploy Intelligent Contract for AI-powered resolution via validators.
+                          </p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={deployOnChain}
+                        onCheckedChange={setDeployOnChain}
+                        disabled={isProcessing}
+                      />
+                    </div>
+                  </div>
                 </div>
-                
-                {deployOnChain && !isOnBase && (
-                  <div className="mt-3 pt-3 border-t border-primary/20">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={switchToBase}
-                      className="gap-2"
-                    >
-                      <Zap className="h-4 w-4" />
-                      Switch to Base Sepolia
-                    </Button>
+
+                {/* Hybrid Deployment Status */}
+                {isHybridDeploying && (
+                  <div className="space-y-2 p-4 rounded-lg bg-secondary/50 border">
+                    <p className="text-sm font-medium mb-2">Deployment Progress</p>
+                    
+                    {deployToBaseSepolia && (
+                      <div className={`flex items-center gap-2 text-sm ${
+                        baseStep.status === "success" ? "text-green-600" :
+                        baseStep.status === "error" ? "text-red-600" :
+                        baseStep.status === "deploying" ? "text-blue-600" : "text-muted-foreground"
+                      }`}>
+                        {baseStep.status === "success" ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : baseStep.status === "error" ? (
+                          <XCircle className="h-4 w-4" />
+                        ) : baseStep.status === "deploying" ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Zap className="h-4 w-4" />
+                        )}
+                        <span>Base Sepolia: {baseStep.message}</span>
+                      </div>
+                    )}
+                    
+                    {deployOnChain && (
+                      <div className={`flex items-center gap-2 text-sm ${
+                        genLayerStep.status === "success" ? "text-green-600" :
+                        genLayerStep.status === "error" ? "text-red-600" :
+                        genLayerStep.status === "deploying" ? "text-purple-600" : "text-muted-foreground"
+                      }`}>
+                        {genLayerStep.status === "success" ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : genLayerStep.status === "error" ? (
+                          <XCircle className="h-4 w-4" />
+                        ) : genLayerStep.status === "deploying" ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-4 w-4" />
+                        )}
+                        <span>GenLayer: {genLayerStep.message}</span>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
 
-              {/* Network Status */}
-              {deployOnChain && !isOnBase && (
-                <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-50 dark:bg-amber-950/20">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5" />
-                    <p className="text-sm text-amber-700 dark:text-amber-500">
-                      Switch to Base Sepolia to deploy on-chain
-                    </p>
+                {/* Legacy Deployment Status */}
+                {deploymentStatus.step !== "idle" && !isHybridDeploying && (
+                  <DeploymentStatus 
+                    status={deploymentStatus} 
+                    onRetry={handleRetryDeployment}
+                  />
+                )}
+
+                {/* Info Box when no deployment selected */}
+                {!deployOnChain && !deployToBaseSepolia && (
+                  <div className="p-4 rounded-lg bg-secondary/50 border border-border">
+                    <div className="flex items-start gap-3">
+                      <Info className="h-5 w-5 text-muted-foreground mt-0.5" />
+                      <div className="text-sm">
+                        <p className="font-medium mb-1">
+                          Simulated Trading Mode
+                        </p>
+                        <p className="text-muted-foreground">
+                          Without deployment, trading will be simulated in the database.
+                          Enable at least one deployment option for real blockchain functionality.
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {deployOnChain && isOnBase && (
-                <div className="p-3 rounded-lg border border-green-500/30 bg-green-50 dark:bg-green-950/20">
-                  <div className="flex items-start gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-600 mt-0.5" />
-                    <p className="text-sm text-green-700 dark:text-green-500">
-                      Ready for on-chain deployment
-                    </p>
-                  </div>
+                {/* Submit */}
+                <div className="flex gap-3 pt-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => navigate("/")}
+                    className="flex-1"
+                    disabled={isProcessing}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={isProcessing}
+                    className="flex-1 gap-2"
+                  >
+                    {isProcessing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Deploying...
+                      </>
+                    ) : (
+                      <>
+                        <Rocket className="h-4 w-4" />
+                        {(deployOnChain || deployToBaseSepolia) ? "Deploy & Create" : "Create Market"}
+                      </>
+                    )}
+                  </Button>
                 </div>
-              )}
-
-              {!deployOnChain && (
-                <div className="p-3 rounded-lg bg-secondary/50 border border-border">
-                  <div className="flex items-start gap-2">
-                    <Info className="h-4 w-4 text-muted-foreground mt-0.5" />
-                    <p className="text-sm text-muted-foreground">
-                      Market will be saved without blockchain deployment
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Buttons */}
-              <div className="flex gap-3 pt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => navigate("/")}
-                  className="flex-1"
-                  disabled={isSubmitting}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 gap-2"
-                >
-                  {isDeploying ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Deploying...
-                    </>
-                  ) : createMarket.isPending ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      {deployOnChain && <Rocket className="h-4 w-4" />}
-                      {deployOnChain ? "Deploy & Create" : "Create Market"}
-                    </>
-                  )}
-                </Button>
-              </div>
-            </form>
+              </form>
+            </Form>
           </CardContent>
         </Card>
       </main>

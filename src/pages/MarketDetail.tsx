@@ -6,6 +6,7 @@ import { AIInsightCard } from "@/components/AIInsightCard";
 import { MarketChart } from "@/components/MarketChart";
 import { ValidatorConsensus } from "@/components/ValidatorConsensus";
 import { IntelligentContractBadge } from "@/components/IntelligentContractBadge";
+import { GenLayerResolution } from "@/components/GenLayerResolution";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -71,7 +72,6 @@ const MarketDetail = () => {
         })
         .catch((err) => {
           console.error("Failed to read market data:", err);
-          // Don't set error state, just log it
         });
 
       getUserPosition(market.base_contract_address)
@@ -125,7 +125,6 @@ const MarketDetail = () => {
     const shares = tradeAmount / price;
 
     try {
-      // If market has a Base contract and user wants on-chain trading
       if (useBlockchain && market.base_contract_address) {
         const result = await buyShares({
           contractAddress: market.base_contract_address,
@@ -134,7 +133,6 @@ const MarketDetail = () => {
         });
         
         if (result.success) {
-          // Also record in database for portfolio tracking
           await createTrade.mutateAsync({
             marketId: market.id,
             positionType: selectedOutcome,
@@ -142,7 +140,6 @@ const MarketDetail = () => {
             price,
           });
           
-          // Refresh on-chain data
           readMarketData(market.base_contract_address)
             .then((data) => {
               if (data) {
@@ -163,7 +160,6 @@ const MarketDetail = () => {
             .catch(console.error);
         }
       } else {
-        // Database-only trading (simulated)
         await createTrade.mutateAsync({
           marketId: market.id,
           positionType: selectedOutcome,
@@ -181,7 +177,6 @@ const MarketDetail = () => {
     }
   };
 
-  // Derived values with safety checks
   const hasBlockchainContract = !!market?.base_contract_address;
   const hasGenLayerContract = !!market?.intelligent_contract_address;
   const isTrading = createTrade.isPending || isBlockchainPending;
@@ -217,7 +212,6 @@ const MarketDetail = () => {
     );
   }
 
-  // Safe probability calculation
   const probability = Number(market.probability) || 50;
   const potentialReturn = amount && parseFloat(amount) > 0
     ? (parseFloat(amount) / (selectedOutcome === "yes" ? probability : 100 - probability) * 100).toFixed(2) 
@@ -235,7 +229,6 @@ const MarketDetail = () => {
       <Header />
 
       <main className="container py-6">
-        {/* Breadcrumb */}
         <Link
           to="/"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-6"
@@ -301,7 +294,6 @@ const MarketDetail = () => {
                   </div>
                 </div>
                 
-                {/* Probability Bar */}
                 <div className="relative h-10 bg-secondary rounded-full overflow-hidden mb-4">
                   <div
                     className="absolute inset-y-0 left-0 bg-yes rounded-full transition-all duration-500"
@@ -317,7 +309,6 @@ const MarketDetail = () => {
                   </div>
                 </div>
 
-                {/* Yes/No Buttons */}
                 <div className="grid grid-cols-2 gap-3">
                   <button 
                     onClick={() => { setSelectedOutcome("yes"); }}
@@ -335,7 +326,7 @@ const MarketDetail = () => {
               </CardContent>
             </Card>
 
-            {/* Validator Consensus - Only show if validators exist */}
+            {/* Validator Consensus */}
             {(market.validator_count || 0) > 0 && (
               <ValidatorConsensus
                 validatorCount={market.validator_count || 0}
@@ -421,31 +412,16 @@ const MarketDetail = () => {
               </Card>
             )}
 
-            {/* GenLayer Status */}
+            {/* GenLayer AI Resolution */}
             {hasGenLayerContract && (
-              <Card className="border border-purple-500/30 bg-purple-50/50 dark:bg-purple-950/20">
-                <CardContent className="p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-purple-500" />
-                      <span className="text-xs font-medium">GenLayer AI Resolution</span>
-                    </div>
-                    <Badge variant="outline" className="text-xs text-purple-600 border-purple-500/30">
-                      Pending
-                    </Badge>
-                  </div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    AI validators will determine the outcome after the market ends.
-                  </p>
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    Contract: {market.intelligent_contract_address?.slice(0, 10)}...{market.intelligent_contract_address?.slice(-6)}
-                    <ExternalLink 
-                      className="h-3 w-3 inline ml-1 cursor-pointer" 
-                      onClick={() => window.open(`https://explorer-asimov.genlayer.com/address/${market.intelligent_contract_address}`, "_blank")}
-                    />
-                  </div>
-                </CardContent>
-              </Card>
+              <GenLayerResolution
+                contractAddress={market.intelligent_contract_address}
+                marketEndDate={market.end_date}
+                onResolved={(outcome, reasoning) => {
+                  console.log("Market resolved:", outcome === 1 ? "YES" : "NO");
+                  console.log("Reasoning:", reasoning);
+                }}
+              />
             )}
 
             {/* Trade Panel */}
@@ -475,7 +451,6 @@ const MarketDetail = () => {
                 </div>
 
                 <div className="space-y-3">
-                  {/* Token Selection */}
                   <div>
                     <label className="text-xs text-muted-foreground mb-1.5 block">Trading Token</label>
                     <Select value={selectedToken} onValueChange={(v) => setSelectedToken(v as TradingToken)}>
