@@ -1,0 +1,10 @@
+project_id = "puhydcxinevxublpqmcp"
+
+[functions.analyze-market]
+verify_jwt = false
+
+[functions.base-faucet]
+verify_jwt = false
+
+[functions.genlayer-faucet]
+verify_jwt = false
