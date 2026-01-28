@@ -126,20 +126,71 @@ export const useHybridDeployment = () => {
       const signer = await provider.getSigner();
       const factory = new Contract(FACTORY_ADDRESS, FACTORY_ABI, signer);
 
-      const tx = await factory.createMarket(question, description, durationDays);
-      const receipt = await tx.wait();
+      console.log("=== BASE DEPLOYMENT ===");
+      console.log("Factory:", FACTORY_ADDRESS);
+      console.log("Question:", question);
+      console.log("Duration:", durationDays, "days");
 
-      // Parse MarketCreated event
+      const tx = await factory.createMarket(question, description, durationDays);
+      console.log("TX Hash:", tx.hash);
+      
+      const receipt = await tx.wait();
+      console.log("Receipt logs:", receipt.logs.length);
+
+      // Parse MarketCreated event - try multiple possible argument names
       let contractAddress: string | undefined;
+      
       for (const log of receipt.logs) {
         try {
           const parsed = factory.interface.parseLog(log);
+          console.log("Parsed event:", parsed?.name, parsed?.args);
+          
           if (parsed?.name === "MarketCreated") {
-            contractAddress = parsed.args.marketAddress;
+            // Try different possible arg names
+            contractAddress = parsed.args.marketAddress 
+              || parsed.args.market 
+              || parsed.args.newMarket
+              || parsed.args[0]; // First indexed arg is often the address
+            
+            console.log("Found MarketCreated event, address:", contractAddress);
             break;
           }
-        } catch {}
+        } catch (e) {
+          // Try to decode as raw address from topics
+          if (log.topics && log.topics.length > 1) {
+            // Topic[0] is event signature, Topic[1] might be indexed address
+            const possibleAddress = "0x" + log.topics[1]?.slice(-40);
+            if (possibleAddress && possibleAddress.length === 42) {
+              console.log("Possible address from topic:", possibleAddress);
+              // Verify it's a contract
+              const code = await provider.getCode(possibleAddress);
+              if (code !== "0x" && code.length > 2) {
+                contractAddress = possibleAddress;
+                console.log("Verified contract from topic:", contractAddress);
+                break;
+              }
+            }
+          }
+        }
       }
+
+      // Fallback: If no event found, try to get from transaction trace
+      if (!contractAddress) {
+        console.log("No event found, checking receipt...");
+        // Sometimes the contract address is in the logs data
+        for (const log of receipt.logs) {
+          if (log.address && log.address !== FACTORY_ADDRESS) {
+            const code = await provider.getCode(log.address);
+            if (code !== "0x" && code.length > 2) {
+              contractAddress = log.address;
+              console.log("Found contract from log address:", contractAddress);
+              break;
+            }
+          }
+        }
+      }
+
+      console.log("Final contract address:", contractAddress);
 
       return {
         contractAddress,
