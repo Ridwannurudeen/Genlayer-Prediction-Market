@@ -1,0 +1,24 @@
+{
+  "name": "prediction-market-contracts",
+  "version": "1.0.0",
+  "description": "Smart contracts for Prediction Market on Base Sepolia",
+  "scripts": {
+    "compile": "npx hardhat compile",
+    "test": "npx hardhat test",
+    "deploy": "npx hardhat run scripts/deploy.js --network baseSepolia",
+    "deploy:local": "npx hardhat run scripts/deploy.js --network hardhat",
+    "verify": "npx hardhat verify --network baseSepolia"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.0",
+    "dotenv": "^16.3.1"
+  },
+  "keywords": [
+    "prediction-market",
+    "ethereum",
+    "base",
+    "solidity"
+  ],
+  "license": "MIT"
+}
