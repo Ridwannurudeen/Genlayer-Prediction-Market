@@ -139,7 +139,7 @@ const CreateMarket = () => {
         }
 
         baseContractAddress = result.baseContractAddress || null;
-        intelligentContractAddress = result.genLayerTxHash || null;
+        intelligentContractAddress = result.genLayerContractAddress || null;
       }
 
       // Create market record in database
