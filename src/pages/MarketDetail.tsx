@@ -7,6 +7,8 @@ import { MarketChart } from "@/components/MarketChart";
 import { ValidatorConsensus } from "@/components/ValidatorConsensus";
 import { IntelligentContractBadge } from "@/components/IntelligentContractBadge";
 import { GenLayerResolution } from "@/components/GenLayerResolution";
+import { ResolutionBridge } from "@/components/ResolutionBridge";
+import { ClaimWinnings } from "@/components/ClaimWinnings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -545,6 +547,28 @@ const MarketDetail = () => {
                 onResolved={(outcome, reasoning) => {
                   console.log("Market resolved:", outcome === 1 ? "YES" : "NO");
                   console.log("Reasoning:", reasoning);
+                }}
+              />
+            )}
+
+            {/* Resolution Bridge - Sync GenLayer outcome to Base */}
+            {hasGenLayerContract && hasBlockchainContract && (
+              <ResolutionBridge
+                genLayerContractAddress={market.intelligent_contract_address}
+                baseContractAddress={market.base_contract_address}
+                marketEndDate={market.end_date}
+                onBridgeComplete={() => {
+                  refreshOnChainData();
+                }}
+              />
+            )}
+
+            {/* Claim Winnings - For winners after resolution */}
+            {hasBlockchainContract && (
+              <ClaimWinnings
+                baseContractAddress={market.base_contract_address}
+                onClaimComplete={() => {
+                  refreshOnChainData();
                 }}
               />
             )}

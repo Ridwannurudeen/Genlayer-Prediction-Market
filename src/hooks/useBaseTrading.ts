@@ -28,6 +28,7 @@ const OLD_CONTRACT_ABI = [
   "function buyShares(uint8 _outcome) payable",
   "function sellShares(uint8 _outcome, uint256 _amount)",
   "function claimWinnings()",
+  "function resolve(uint8 _winner)",
 ];
 
 interface TradeParams {
@@ -276,6 +277,80 @@ export const useBaseTrading = () => {
     [isConnected, address, isOnBase, getProvider]
   );
 
+  // Resolve market on Base Sepolia (bridge outcome from GenLayer)
+  const resolveOnBase = useCallback(
+    async (contractAddress: string, winner: number): Promise<TradeResult> => {
+      if (!isConnected || !address) {
+        toast.error("Please connect your wallet first");
+        return { success: false, error: "Wallet not connected" };
+      }
+
+      if (!isOnBase) {
+        toast.error("Please switch to Base Sepolia");
+        return { success: false, error: "Wrong network" };
+      }
+
+      // Validate winner (1 = YES, 2 = NO)
+      if (winner !== 1 && winner !== 2) {
+        toast.error("Invalid outcome");
+        return { success: false, error: "Invalid outcome" };
+      }
+
+      setIsPending(true);
+
+      try {
+        const provider = await getProvider();
+        const signer = await provider.getSigner();
+        
+        const contractType = await detectContractType(contractAddress);
+        
+        console.log("=== RESOLVE ON BASE ===");
+        console.log("Contract:", contractAddress);
+        console.log("Winner:", winner === 1 ? "YES" : "NO");
+        console.log("Contract type:", contractType);
+
+        if (contractType === "invalid") {
+          toast.error("Contract not found on Base Sepolia");
+          return { success: false, error: "Invalid contract" };
+        }
+
+        // Use the appropriate resolve function
+        const contract = new Contract(
+          contractAddress, 
+          ["function resolve(uint8 _winner)"], 
+          signer
+        );
+        
+        const tx = await contract.resolve(winner);
+        setCurrentTxHash(tx.hash);
+        
+        console.log("Resolution TX Hash:", tx.hash);
+        await tx.wait();
+
+        toast.success(`Market resolved as ${winner === 1 ? "YES" : "NO"}!`);
+        return { success: true, transactionHash: tx.hash };
+      } catch (error: any) {
+        console.error("Resolve on Base error:", error);
+        
+        // Check for common errors
+        if (error?.message?.includes("already resolved")) {
+          toast.error("Market is already resolved");
+        } else if (error?.message?.includes("not ended")) {
+          toast.error("Market has not ended yet");
+        } else if (error?.message?.includes("only owner") || error?.message?.includes("Ownable")) {
+          toast.error("Only the market creator can resolve");
+        } else {
+          toast.error("Failed to resolve market", { description: error?.message });
+        }
+        
+        return { success: false, error: error?.message };
+      } finally {
+        setIsPending(false);
+      }
+    },
+    [isConnected, address, isOnBase, getProvider, detectContractType]
+  );
+
   // Helper to safely call a contract function on Base Sepolia
   const safeCall = async (contractAddress: string, abi: string[], functionName: string, args: any[] = []): Promise<any> => {
     try {
@@ -490,6 +565,7 @@ export const useBaseTrading = () => {
     buyShares,
     sellShares,
     claimWinnings,
+    resolveOnBase,
     readMarketData,
     getUserPosition,
     isPending,

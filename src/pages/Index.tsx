@@ -18,7 +18,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 const toUiMarket = (dbMarket: DbMarket): Market => ({
   id: dbMarket.id,
   title: dbMarket.title,
-  probability: Number(dbMarket.probability),
+  probability: Number(dbMarket.probability) || 50, // Default to 50% if 0 or null
   volume: Number(dbMarket.volume),
   category: dbMarket.category,
   verified: dbMarket.verified,

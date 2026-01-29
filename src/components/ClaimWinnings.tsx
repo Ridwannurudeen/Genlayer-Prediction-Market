@@ -1,230 +1,296 @@
-import { useState, useEffect } from "react";
-import { Trophy, Coins, Loader2, PartyPopper, ExternalLink, XCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect, useCallback } from "react";
+import { Trophy, Loader2, Zap, CheckCircle2, Coins, ExternalLink, PartyPopper } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { useMarketResolution } from "@/hooks/useMarketResolution";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useBaseTrading } from "@/hooks/useBaseTrading";
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
-import { supabase } from "@/integrations/supabase/client";
-import { cn } from "@/lib/utils";
+import { formatEther } from "ethers";
 
 interface ClaimWinningsProps {
-  marketId: string;
-  resolvedOutcome: "yes" | "no";
-  onClaimed?: () => void;
+  baseContractAddress: string | null | undefined;
+  onClaimComplete?: () => void;
 }
 
 export const ClaimWinnings = ({
-  marketId,
-  resolvedOutcome,
-  onClaimed,
+  baseContractAddress,
+  onClaimComplete,
 }: ClaimWinningsProps) => {
-  const { address, isConnected } = useWalletAuth();
-  const { claimWinnings, isClaiming, getResolutionData } = useMarketResolution();
+  const { isConnected, address, switchToBase } = useWalletAuth();
+  const { claimWinnings, readMarketData, getUserPosition, isOnBase, isPending } = useBaseTrading();
+
+  const [marketData, setMarketData] = useState<{
+    isResolved: boolean;
+    winner: number;
+    totalPool: string;
+  } | null>(null);
   
-  const [resolutionData, setResolutionData] = useState<any>(null);
-  const [userPosition, setUserPosition] = useState<any>(null);
+  const [userPosition, setUserPosition] = useState<{
+    yesShares: string;
+    noShares: string;
+  } | null>(null);
+  
   const [isLoading, setIsLoading] = useState(true);
+  const [isClaiming, setIsClaiming] = useState(false);
+  const [hasClaimed, setHasClaimed] = useState(false);
 
-  // Fetch user's position and resolution data
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!address || !marketId) {
-        setIsLoading(false);
-        return;
-      }
+  // Check market and user status
+  const checkStatus = useCallback(async () => {
+    if (!baseContractAddress) {
+      setIsLoading(false);
+      return;
+    }
 
-      setIsLoading(true);
-
-      try {
-        // Get resolution data
-        const data = await getResolutionData(marketId);
-        setResolutionData(data);
-
-        // Get user's winning position
-        const { data: positions } = await supabase
-          .from("positions")
-          .select("*")
-          .eq("market_id", marketId)
-          .eq("user_id", address)
-          .eq("position_type", resolvedOutcome);
-
-        if (positions && positions.length > 0) {
-          setUserPosition(positions[0]);
-        }
-      } catch (err) {
-        console.error("Error fetching claim data:", err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [address, marketId, resolvedOutcome, getResolutionData]);
-
-  const handleClaim = async () => {
-    if (!userPosition || !address || !resolutionData) return;
+    setIsLoading(true);
 
     try {
-      await claimWinnings({
-        marketId,
-        positionId: userPosition.id,
-        amount: resolutionData.claimableAmount,
-        userAddress: address,
-      });
-      
-      // Refresh data
-      const data = await getResolutionData(marketId);
-      setResolutionData(data);
-      setUserPosition({ ...userPosition, claimed: true });
-      
-      onClaimed?.();
-    } catch (err) {
-      // Error handled in hook
+      const data = await readMarketData(baseContractAddress);
+      if (data) {
+        setMarketData({
+          isResolved: data.isResolved,
+          winner: data.winner,
+          totalPool: data.totalPool,
+        });
+      }
+
+      const position = await getUserPosition(baseContractAddress);
+      if (position) {
+        setUserPosition(position);
+      }
+    } catch (error) {
+      console.error("Error checking claim status:", error);
     }
+
+    setIsLoading(false);
+  }, [baseContractAddress, readMarketData, getUserPosition]);
+
+  useEffect(() => {
+    if (isConnected) {
+      checkStatus();
+    } else {
+      setIsLoading(false);
+    }
+  }, [isConnected, checkStatus]);
+
+  // Calculate if user won and estimated winnings
+  const calculateWinnings = () => {
+    if (!marketData?.isResolved || !userPosition || !marketData.winner) {
+      return { isWinner: false, shares: "0", estimatedWinnings: "0" };
+    }
+
+    const yesShares = parseFloat(userPosition.yesShares || "0");
+    const noShares = parseFloat(userPosition.noShares || "0");
+    
+    // Winner: 1 = YES, 2 = NO
+    const isYesWinner = marketData.winner === 1;
+    const winningShares = isYesWinner ? yesShares : noShares;
+    
+    if (winningShares <= 0) {
+      return { isWinner: false, shares: "0", estimatedWinnings: "0" };
+    }
+
+    // Rough estimate: user's share of the total pool
+    // In practice, the contract calculates this based on total winning shares
+    const totalPool = parseFloat(marketData.totalPool || "0");
+    const estimatedWinnings = winningShares > 0 ? (winningShares * 2).toFixed(4) : "0";
+
+    return {
+      isWinner: true,
+      shares: winningShares.toFixed(4),
+      estimatedWinnings,
+      outcome: isYesWinner ? "YES" : "NO",
+    };
   };
 
+  const handleClaim = async () => {
+    if (!baseContractAddress) return;
+
+    setIsClaiming(true);
+    
+    const result = await claimWinnings(baseContractAddress);
+    
+    if (result.success) {
+      setHasClaimed(true);
+      onClaimComplete?.();
+    }
+    
+    setIsClaiming(false);
+  };
+
+  // Don't render if no contract
+  if (!baseContractAddress) {
+    return null;
+  }
+
+  // Loading state
   if (isLoading) {
     return (
-      <Card className="border border-neutral-800 bg-neutral-900/50">
-        <CardContent className="p-4 flex items-center justify-center">
-          <Loader2 className="w-5 h-5 animate-spin text-neutral-500" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Not connected
-  if (!isConnected || !address) {
-    return null;
-  }
-
-  // User didn't participate or bet on losing side
-  if (!userPosition || userPosition.shares <= 0) {
-    // Check if user bet on the losing side
-    if (resolutionData?.userPosition) {
-      const losingShares = resolvedOutcome === "yes" 
-        ? resolutionData.userPosition.noShares 
-        : resolutionData.userPosition.yesShares;
-      
-      if (losingShares > 0) {
-        return (
-          <Card className="border border-rose-500/30 bg-rose-500/5">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-rose-500/20 flex items-center justify-center">
-                  <XCircle className="w-5 h-5 text-rose-400" />
-                </div>
-                <div>
-                  <h3 className="font-medium text-neutral-200">Better Luck Next Time</h3>
-                  <p className="text-sm text-neutral-500">
-                    Your {resolvedOutcome === "yes" ? "NO" : "YES"} position did not win
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      }
-    }
-    return null;
-  }
-
-  // Already claimed
-  if (userPosition.claimed) {
-    return (
-      <Card className="border border-emerald-500/30 bg-emerald-500/5">
+      <Card className="relative overflow-hidden bg-gradient-to-br from-slate-900/70 via-slate-900/50 to-slate-800/30 backdrop-blur-xl border-white/10">
         <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
-              <PartyPopper className="w-5 h-5 text-emerald-400" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-medium text-emerald-400">Winnings Claimed!</h3>
-              <p className="text-sm text-neutral-500">
-                You received {userPosition.claimed_amount?.toFixed(4) || resolutionData?.claimableAmount?.toFixed(4)} ETH
-              </p>
-            </div>
-            {userPosition.claim_tx_hash && (
-              <a
-                href={`https://sepolia.basescan.org/tx/${userPosition.claim_tx_hash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-emerald-400 hover:text-emerald-300"
-              >
-                <ExternalLink className="w-4 h-4" />
-              </a>
-            )}
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-white/50" />
+            <span className="text-sm text-white/70">Checking winnings...</span>
           </div>
         </CardContent>
       </Card>
     );
   }
 
-  // Can claim winnings
-  const winningAmount = resolutionData?.claimableAmount || 0;
+  // Market not resolved yet
+  if (!marketData?.isResolved) {
+    return null;
+  }
 
-  return (
-    <Card className="border-2 border-emerald-500/50 bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 overflow-hidden">
-      {/* Celebration effect */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-20 -right-20 w-40 h-40 bg-emerald-500/20 rounded-full blur-3xl" />
-        <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-yellow-500/10 rounded-full blur-3xl" />
-      </div>
+  const winnings = calculateWinnings();
 
-      <CardContent className="relative p-5">
-        <div className="flex items-start gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500/30 to-yellow-500/20 flex items-center justify-center flex-shrink-0">
-            <Trophy className="w-7 h-7 text-yellow-400" />
+  // User already claimed
+  if (hasClaimed) {
+    return (
+      <Card className="relative overflow-hidden bg-gradient-to-br from-emerald-950/30 via-slate-900/70 to-slate-900/90 backdrop-blur-xl border-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.1)]">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-center gap-3 py-4">
+            <PartyPopper className="h-8 w-8 text-emerald-400" />
+            <div className="text-center">
+              <p className="text-lg font-bold text-emerald-400">Winnings Claimed!</p>
+              <p className="text-xs text-white/50 font-mono">Check your wallet for ETH</p>
+            </div>
           </div>
-          
-          <div className="flex-1">
-            <h3 className="text-lg font-bold text-white mb-1">
-              🎉 You Won!
-            </h3>
-            <p className="text-sm text-neutral-400 mb-4">
-              Your {resolvedOutcome.toUpperCase()} position won! Claim your share of the prize pool.
-            </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
-            <div className="p-3 rounded-xl bg-neutral-900/60 mb-4">
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm text-neutral-500">Your winning shares</span>
-                <span className="font-semibold text-white">{userPosition.shares}</span>
+  // User is a winner
+  if (winnings.isWinner) {
+    return (
+      <Card className="relative overflow-hidden bg-gradient-to-br from-emerald-950/30 via-amber-950/20 to-slate-900/90 backdrop-blur-xl border-emerald-500/30 shadow-[0_0_30px_rgba(16,185,129,0.15)]">
+        {/* Celebration particles */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          {[...Array(6)].map((_, i) => (
+            <div
+              key={i}
+              className="absolute w-1 h-1 rounded-full bg-emerald-400/50 animate-float"
+              style={{
+                left: `${15 + i * 15}%`,
+                top: `${20 + (i % 3) * 25}%`,
+                animationDelay: `${i * 200}ms`,
+                animationDuration: '3s',
+              }}
+            />
+          ))}
+        </div>
+        
+        <CardContent className="relative p-4">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <div className="relative w-10 h-10 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+                <Trophy className="h-5 w-5 text-emerald-400" />
+                <div className="absolute inset-0 rounded-lg bg-emerald-500/20 animate-ping" style={{ animationDuration: '2s' }} />
               </div>
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm text-neutral-500">Total prize pool</span>
-                <span className="font-semibold text-white">
-                  {resolutionData?.totalPool?.toFixed(4) || "0"} ETH
-                </span>
-              </div>
-              <div className="flex justify-between items-center pt-2 border-t border-neutral-800">
-                <span className="text-sm text-neutral-400">Your winnings</span>
-                <span className="text-xl font-bold text-emerald-400">
-                  {winningAmount.toFixed(4)} ETH
-                </span>
+              <div>
+                <span className="text-sm font-bold text-emerald-400">You Won!</span>
+                <p className="text-[10px] text-white/50 font-mono">Market resolved {winnings.outcome}</p>
               </div>
             </div>
+            <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+              <CheckCircle2 className="h-3 w-3 mr-1" />
+              Winner
+            </Badge>
+          </div>
 
+          {/* Winnings display */}
+          <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-500/10 to-amber-500/10 border border-emerald-500/20 mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] text-white/40 font-mono uppercase tracking-widest">Your Winning Shares</span>
+              <span className="text-sm font-bold text-white/90 font-mono">{winnings.shares}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-white/40 font-mono uppercase tracking-widest">Estimated Payout</span>
+              <div className="flex items-center gap-1">
+                <Coins className="h-4 w-4 text-amber-400" />
+                <span className="text-lg font-bold text-emerald-400 font-mono">{winnings.estimatedWinnings} ETH</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Claim Button */}
+          {!isConnected ? (
+            <p className="text-xs text-white/40 text-center font-mono">
+              Connect wallet to claim winnings
+            </p>
+          ) : !isOnBase ? (
+            <Button
+              onClick={switchToBase}
+              variant="outline"
+              className="w-full gap-2 bg-blue-500/10 border-blue-500/30 hover:bg-blue-500/20 text-blue-400"
+            >
+              <Zap className="h-4 w-4" />
+              Switch to Base Sepolia
+            </Button>
+          ) : (
             <Button
               onClick={handleClaim}
-              disabled={isClaiming || winningAmount <= 0}
-              className="w-full bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-semibold shadow-lg shadow-emerald-900/30"
-              size="lg"
+              disabled={isClaiming || isPending}
+              className="w-full h-12 gap-2 bg-gradient-to-r from-emerald-500 to-amber-500 hover:from-emerald-600 hover:to-amber-600 text-white font-bold shadow-[0_4px_0_0_rgba(16,185,129,0.5),0_6px_20px_rgba(16,185,129,0.3)] active:shadow-[0_2px_0_0_rgba(16,185,129,0.5)] active:translate-y-[2px] transition-all"
             >
-              {isClaiming ? (
+              {isClaiming || isPending ? (
                 <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  <Loader2 className="h-5 w-5 animate-spin" />
                   Claiming...
                 </>
               ) : (
                 <>
-                  <Coins className="w-5 h-5 mr-2" />
-                  Claim {winningAmount.toFixed(4)} ETH
+                  <Trophy className="h-5 w-5" />
+                  Claim {winnings.estimatedWinnings} ETH
                 </>
               )}
             </Button>
+          )}
+
+          <p className="text-[10px] text-white/30 mt-3 text-center font-mono">
+            ETH will be sent directly to your connected wallet
+          </p>
+        </CardContent>
+        
+        <style>{`
+          @keyframes float {
+            0%, 100% { transform: translateY(0px) scale(1); opacity: 0.5; }
+            50% { transform: translateY(-15px) scale(1.5); opacity: 1; }
+          }
+          .animate-float {
+            animation: float 3s ease-in-out infinite;
+          }
+        `}</style>
+      </Card>
+    );
+  }
+
+  // User is not a winner (has losing position or no position)
+  if (marketData?.isResolved && !winnings.isWinner) {
+    const hasPosition = parseFloat(userPosition?.yesShares || "0") > 0 || parseFloat(userPosition?.noShares || "0") > 0;
+    
+    if (!hasPosition) {
+      return null; // No position to show
+    }
+
+    return (
+      <Card className="relative overflow-hidden bg-gradient-to-br from-slate-900/70 via-slate-900/50 to-red-950/20 backdrop-blur-xl border-red-500/20">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-red-500/20 border border-red-500/30 flex items-center justify-center">
+              <Coins className="h-5 w-5 text-red-400/70" />
+            </div>
+            <div>
+              <span className="text-sm font-medium text-white/70">Market Resolved</span>
+              <p className="text-[10px] text-white/40 font-mono">
+                Outcome: {marketData.winner === 1 ? 'YES' : 'NO'} - Your position did not win
+              </p>
+            </div>
           </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return null;
 };
