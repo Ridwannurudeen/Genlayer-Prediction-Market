@@ -144,11 +144,39 @@ export const useCreateTrade = () => {
         if (insertError) throw insertError;
       }
 
+      // ✅ UPDATE MARKET VOLUME - This was missing!
+      // Fetch current market volume and update it
+      const { data: market, error: fetchError } = await supabase
+        .from("markets")
+        .select("volume")
+        .eq("id", marketId)
+        .single();
+
+      if (!fetchError && market) {
+        const currentVolume = Number(market.volume) || 0;
+        // Convert ETH amount to USD equivalent (rough estimate: 1 ETH ≈ $3000 for display)
+        // Or just use the raw ETH value * 1000 for simplicity
+        const volumeIncrement = totalAmount * 3000; // Approximate USD value
+        
+        const { error: volumeError } = await supabase
+          .from("markets")
+          .update({
+            volume: currentVolume + volumeIncrement,
+          })
+          .eq("id", marketId);
+
+        if (volumeError) {
+          console.error("Failed to update market volume:", volumeError);
+          // Don't throw - volume update is not critical
+        }
+      }
+
       return { success: true };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["positions"] });
       queryClient.invalidateQueries({ queryKey: ["trades"] });
+      queryClient.invalidateQueries({ queryKey: ["markets"] }); // Also refresh markets to show updated volume
     },
   });
 };
