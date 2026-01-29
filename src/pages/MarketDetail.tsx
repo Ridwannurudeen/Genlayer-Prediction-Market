@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Calendar, DollarSign, Loader2, Sparkles, Share2, Bookmark, Info, Users, ExternalLink, Zap, AlertTriangle, Coins, RefreshCw } from "lucide-react";
+import { ArrowLeft, Calendar, DollarSign, Loader2, Sparkles, Share2, Bookmark, Info, Users, ExternalLink, Zap, AlertTriangle, Coins, RefreshCw, Activity, Radio, Cpu } from "lucide-react";
 import { Header } from "@/components/Header";
 import { AIInsightCard } from "@/components/AIInsightCard";
 import { MarketChart } from "@/components/MarketChart";
@@ -114,17 +114,11 @@ const MarketDetail = () => {
       console.log("Calculating probability - Yes Pool:", yesPool, "No Pool:", noPool, "Total:", totalPool);
       
       if (totalPool > 0) {
-        // Probability based on pool ratio
-        const prob = Math.round((noPool / totalPool) * 100);
-        // When more YES is bought, noPool becomes smaller relative to total, so YES probability goes up
-        // Actually: YES price = noPool / totalPool (lower noPool = cheaper YES = more likely)
-        // So YES probability = 100 - (noPool / totalPool * 100) = yesPool / totalPool * 100
         const yesProb = Math.round((yesPool / totalPool) * 100);
         console.log("Calculated YES probability:", yesProb);
-        return Math.max(1, Math.min(99, yesProb)); // Clamp between 1-99
+        return Math.max(1, Math.min(99, yesProb));
       }
     }
-    // Fallback to database value
     return Number(market?.probability) || 50;
   }, [onChainData, market?.probability]);
 
@@ -178,7 +172,6 @@ const MarketDetail = () => {
         });
         
         if (result.success) {
-          // Record in database for portfolio tracking
           await createTrade.mutateAsync({
             marketId: market.id,
             positionType: selectedOutcome,
@@ -186,10 +179,7 @@ const MarketDetail = () => {
             price,
           });
           
-          // Wait a moment for blockchain state to update
           await new Promise(resolve => setTimeout(resolve, 2000));
-          
-          // Refresh on-chain data to update odds
           await refreshOnChainData();
           
           toast.success(`Bought ${selectedOutcome.toUpperCase()} shares! Odds updated.`);
@@ -265,7 +255,7 @@ const MarketDetail = () => {
       <main className="container py-6">
         <Link
           to="/"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-6"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-6 transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Markets
@@ -274,87 +264,150 @@ const MarketDetail = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column - Main Content */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Market Header */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="secondary" className="text-xs">
-                  {market.category || "General"}
-                </Badge>
-                {market.verified && (
-                  <Badge variant="outline" className="text-xs text-yes border-yes/30">
-                    ✓ Verified
+            {/* Market Header - Futuristic */}
+            <div className="relative p-6 rounded-2xl bg-gradient-to-br from-slate-900/80 via-slate-900/60 to-purple-900/20 backdrop-blur-xl border border-white/10 overflow-hidden">
+              {/* Background effects */}
+              <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 via-transparent to-blue-500/5" />
+              <div 
+                className="absolute inset-0 opacity-[0.02]"
+                style={{
+                  backgroundImage: `linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
+                                   linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)`,
+                  backgroundSize: '30px 30px',
+                }}
+              />
+              
+              <div className="relative space-y-4">
+                {/* Badges */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge className="bg-white/10 text-white/80 border-white/20 hover:bg-white/20">
+                    {market.category || "General"}
                   </Badge>
-                )}
-                {hasGenLayerContract && (
-                  <IntelligentContractBadge 
-                    contractAddress={market.intelligent_contract_address}
-                    resolutionSource={market.resolution_source}
-                  />
-                )}
-                {hasBlockchainContract && (
-                  <Badge variant="outline" className="text-xs text-blue-600 border-blue-500/30">
-                    <Zap className="h-3 w-3 mr-1" />
-                    Base Sepolia
-                  </Badge>
-                )}
-              </div>
-              <h1 className="text-2xl font-semibold leading-tight">
-                {market.title}
-              </h1>
-              <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <DollarSign className="h-4 w-4" />
-                  {formatVolume(Number(market.volume) || 0)} volume
-                </span>
-                <span className="flex items-center gap-1">
-                  <Calendar className="h-4 w-4" />
-                  Ends {formatDate(market.end_date)}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Users className="h-4 w-4" />
-                  {market.validator_count || 0} validators
-                </span>
+                  {market.verified && (
+                    <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+                      ✓ Verified
+                    </Badge>
+                  )}
+                  {hasGenLayerContract && (
+                    <IntelligentContractBadge 
+                      contractAddress={market.intelligent_contract_address}
+                      resolutionSource={market.resolution_source}
+                    />
+                  )}
+                  {hasBlockchainContract && (
+                    <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
+                      <Zap className="h-3 w-3 mr-1" />
+                      Base Sepolia
+                    </Badge>
+                  )}
+                </div>
+                
+                {/* Question with gradient text */}
+                <h1 className="text-2xl md:text-3xl font-bold leading-tight bg-gradient-to-r from-white via-white to-purple-200 bg-clip-text text-transparent">
+                  {market.title}
+                </h1>
+                
+                {/* Stats row */}
+                <div className="flex items-center gap-6 text-sm">
+                  <span className="flex items-center gap-1.5 text-white/60">
+                    <div className="w-6 h-6 rounded-md bg-white/5 flex items-center justify-center">
+                      <DollarSign className="h-3.5 w-3.5 text-emerald-400" />
+                    </div>
+                    <span className="font-mono">{formatVolume(Number(market.volume) || 0)}</span>
+                    <span className="text-white/40">volume</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 text-white/60">
+                    <div className="w-6 h-6 rounded-md bg-white/5 flex items-center justify-center">
+                      <Calendar className="h-3.5 w-3.5 text-amber-400" />
+                    </div>
+                    <span className="font-mono">{formatDate(market.end_date)}</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 text-white/60">
+                    <div className="w-6 h-6 rounded-md bg-white/5 flex items-center justify-center">
+                      <Users className="h-3.5 w-3.5 text-purple-400" />
+                    </div>
+                    <span className="font-mono">{market.validator_count || 0}</span>
+                    <span className="text-white/40">validators</span>
+                  </span>
+                </div>
               </div>
             </div>
 
-            {/* Current Probability */}
-            <Card className="border">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-sm font-medium">Current Probability</span>
+            {/* Current Probability - Futuristic */}
+            <Card className="relative overflow-hidden bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-slate-800/50 backdrop-blur-xl border-white/10">
+              <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 via-transparent to-red-500/5" />
+              
+              <CardContent className="relative p-6">
+                <div className="flex items-center justify-between mb-5">
                   <div className="flex items-center gap-2">
-                    <Share2 className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-foreground" />
-                    <Bookmark className="h-4 w-4 text-muted-foreground cursor-pointer hover:text-foreground" />
+                    <Activity className="h-4 w-4 text-purple-400" />
+                    <span className="text-sm font-medium text-white/90">Current Probability</span>
+                    <span className="text-[10px] text-white/40 font-mono uppercase tracking-wider">Live</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Share2 className="h-4 w-4 text-white/30 cursor-pointer hover:text-white/70 transition-colors" />
+                    <Bookmark className="h-4 w-4 text-white/30 cursor-pointer hover:text-white/70 transition-colors" />
                   </div>
                 </div>
                 
-                <div className="relative h-10 bg-secondary rounded-full overflow-hidden mb-4">
+                {/* Probability Bar - Enhanced */}
+                <div className="relative h-14 bg-slate-800/50 rounded-xl overflow-hidden mb-5 border border-white/5">
+                  {/* YES portion */}
                   <div
-                    className="absolute inset-y-0 left-0 bg-yes rounded-full transition-all duration-500"
+                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-emerald-600 to-emerald-500 transition-all duration-700 ease-out"
                     style={{ width: `${probability}%` }}
-                  />
-                  <div className="absolute inset-0 flex items-center justify-between px-4">
-                    <span className="text-sm font-semibold text-white z-10">
+                  >
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
+                    {/* Shimmer effect */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" />
+                  </div>
+                  
+                  {/* Labels */}
+                  <div className="absolute inset-0 flex items-center justify-between px-5">
+                    <span className="text-base font-bold text-white z-10 drop-shadow-lg">
                       Yes {probability}%
                     </span>
-                    <span className="text-sm font-semibold text-foreground z-10">
+                    <span className="text-base font-bold text-white/80 z-10">
                       No {100 - probability}%
                     </span>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                {/* Buy Buttons - Depth-based design with micro-interactions */}
+                <div className="grid grid-cols-2 gap-4">
                   <button 
                     onClick={() => { setSelectedOutcome("yes"); }}
-                    className="py-3 px-6 rounded-full text-sm font-semibold bg-yes text-white hover:opacity-90 transition-opacity"
+                    className={`
+                      relative group py-4 px-6 rounded-xl text-sm font-bold transition-all duration-300
+                      bg-gradient-to-b from-emerald-500 to-emerald-600
+                      hover:from-emerald-400 hover:to-emerald-500
+                      shadow-[0_4px_0_0_#065f46,0_6px_20px_rgba(16,185,129,0.3)]
+                      hover:shadow-[0_4px_0_0_#065f46,0_6px_30px_rgba(16,185,129,0.5)]
+                      active:shadow-[0_2px_0_0_#065f46]
+                      active:translate-y-[2px]
+                      text-white
+                    `}
                   >
-                    Buy Yes
+                    <span className="relative z-10">Buy Yes</span>
+                    {/* Inner glow on hover */}
+                    <div className="absolute inset-0 rounded-xl bg-gradient-to-t from-transparent to-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
                   </button>
+                  
                   <button 
                     onClick={() => { setSelectedOutcome("no"); }}
-                    className="py-3 px-6 rounded-full text-sm font-semibold bg-no text-white hover:opacity-90 transition-opacity"
+                    className={`
+                      relative group py-4 px-6 rounded-xl text-sm font-bold transition-all duration-300
+                      bg-gradient-to-b from-red-500 to-red-600
+                      hover:from-red-400 hover:to-red-500
+                      shadow-[0_4px_0_0_#991b1b,0_6px_20px_rgba(239,68,68,0.3)]
+                      hover:shadow-[0_4px_0_0_#991b1b,0_6px_30px_rgba(239,68,68,0.5)]
+                      active:shadow-[0_2px_0_0_#991b1b]
+                      active:translate-y-[2px]
+                      text-white
+                    `}
                   >
-                    Buy No
+                    <span className="relative z-10">Buy No</span>
+                    <div className="absolute inset-0 rounded-xl bg-gradient-to-t from-transparent to-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
                   </button>
                 </div>
               </CardContent>
@@ -372,21 +425,25 @@ const MarketDetail = () => {
             {/* Price Chart */}
             <MarketChart data={[]} />
 
-            {/* Description */}
-            <Card className="border">
-              <CardContent className="p-6">
-                <div className="flex items-center gap-2 mb-3">
-                  <Info className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">Resolution Details</span>
+            {/* Resolution Details - Futuristic */}
+            <Card className="relative overflow-hidden bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-slate-800/50 backdrop-blur-xl border-white/10">
+              <CardContent className="relative p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
+                    <Info className="h-4 w-4 text-purple-400" />
+                  </div>
+                  <span className="text-sm font-medium text-white/90">Resolution Details</span>
                 </div>
-                <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+                <p className="text-sm text-white/60 leading-relaxed mb-4 font-light">
                   {market.description || "No description provided."}
                 </p>
                 {market.resolution_source && (
-                  <div className="pt-3 border-t border-border">
-                    <p className="text-xs text-muted-foreground">
-                      <span className="font-medium">Data Source:</span> {market.resolution_source}
-                    </p>
+                  <div className="pt-4 border-t border-white/5">
+                    <div className="flex items-center gap-2 text-xs text-white/40">
+                      <Radio className="h-3 w-3 text-purple-400" />
+                      <span className="font-mono uppercase tracking-wider">Data Source:</span>
+                      <span className="text-white/60">{market.resolution_source}</span>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -395,25 +452,31 @@ const MarketDetail = () => {
 
           {/* Right Column - Trade Panel & AI */}
           <div className="space-y-4">
-            {/* Blockchain Status */}
+            {/* Blockchain Status - Futuristic */}
             {hasBlockchainContract && (
-              <Card className="border border-blue-500/30 bg-blue-50/50 dark:bg-blue-950/20">
-                <CardContent className="p-3">
-                  <div className="flex items-center justify-between">
+              <Card className="relative overflow-hidden bg-gradient-to-br from-blue-950/50 via-slate-900/70 to-slate-900/90 backdrop-blur-xl border-blue-500/20 shadow-[0_0_30px_rgba(59,130,246,0.1)]">
+                <CardContent className="relative p-4">
+                  <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      <Zap className="h-4 w-4 text-blue-500" />
-                      <span className="text-xs font-medium">Base Sepolia Trading</span>
+                      <div className="relative">
+                        <div className="absolute inset-0 bg-blue-500 rounded-lg blur-md opacity-30 animate-pulse" />
+                        <div className="relative w-8 h-8 rounded-lg bg-blue-500/20 border border-blue-500/30 flex items-center justify-center">
+                          <Zap className="h-4 w-4 text-blue-400" />
+                        </div>
+                      </div>
+                      <span className="text-xs font-semibold text-white/90">Base Sepolia Trading</span>
                     </div>
                     <div className="flex items-center gap-2">
                       {isOnBase ? (
-                        <Badge variant="outline" className="text-xs text-blue-600 border-blue-500/30">
+                        <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[10px]">
+                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse" />
                           Connected
                         </Badge>
                       ) : (
                         <Button 
                           size="sm" 
                           variant="outline" 
-                          className="h-6 text-xs"
+                          className="h-7 text-xs bg-white/5 border-white/10 hover:bg-white/10"
                           onClick={switchToBase}
                         >
                           Switch to Base
@@ -422,50 +485,52 @@ const MarketDetail = () => {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-6 w-6 p-0"
+                        className="h-7 w-7 p-0 hover:bg-white/10"
                         onClick={refreshOnChainData}
                         disabled={isRefreshing}
                       >
-                        <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`h-3.5 w-3.5 text-white/50 ${isRefreshing ? 'animate-spin' : ''}`} />
                       </Button>
                     </div>
                   </div>
                   
                   {/* Pool Data */}
-                  <div className="mt-2 pt-2 border-t border-border/50 grid grid-cols-2 gap-2 text-xs">
+                  <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-white/[0.02] border border-white/5">
                     <div>
-                      <span className="text-muted-foreground">Yes Pool:</span>
-                      <span className="ml-1 font-medium text-yes">
+                      <span className="text-[10px] text-white/40 uppercase tracking-wider font-mono">Yes Pool</span>
+                      <p className="text-sm font-bold text-emerald-400 font-mono">
                         {parseFloat(onChainData?.yesPool || "0").toFixed(4)} ETH
-                      </span>
+                      </p>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">No Pool:</span>
-                      <span className="ml-1 font-medium text-no">
+                      <span className="text-[10px] text-white/40 uppercase tracking-wider font-mono">No Pool</span>
+                      <p className="text-sm font-bold text-red-400 font-mono">
                         {parseFloat(onChainData?.noPool || "0").toFixed(4)} ETH
-                      </span>
+                      </p>
                     </div>
                   </div>
 
                   {/* Contract Address */}
-                  <div className="mt-2 pt-2 border-t border-border/50 text-xs text-muted-foreground">
+                  <div className="mt-3 pt-3 border-t border-white/5 text-[10px] text-white/40 font-mono">
                     Contract: {market.base_contract_address?.slice(0, 10)}...{market.base_contract_address?.slice(-6)}
                     <ExternalLink 
-                      className="h-3 w-3 inline ml-1 cursor-pointer hover:text-foreground" 
+                      className="h-3 w-3 inline ml-1.5 cursor-pointer hover:text-white/70 transition-colors" 
                       onClick={() => window.open(`https://sepolia.basescan.org/address/${market.base_contract_address}`, "_blank")}
                     />
                   </div>
 
                   {/* User Position */}
                   {userPosition && (parseFloat(userPosition.yesShares || "0") > 0 || parseFloat(userPosition.noShares || "0") > 0) && (
-                    <div className="mt-2 pt-2 border-t border-border/50 text-xs">
-                      <span className="text-muted-foreground">Your Position:</span>
-                      {parseFloat(userPosition.yesShares || "0") > 0 && (
-                        <span className="ml-2 text-yes font-medium">{parseFloat(userPosition.yesShares).toFixed(4)} Yes</span>
-                      )}
-                      {parseFloat(userPosition.noShares || "0") > 0 && (
-                        <span className="ml-2 text-no font-medium">{parseFloat(userPosition.noShares).toFixed(4)} No</span>
-                      )}
+                    <div className="mt-3 pt-3 border-t border-white/5">
+                      <span className="text-[10px] text-white/40 uppercase tracking-wider font-mono">Your Position</span>
+                      <div className="flex gap-3 mt-1">
+                        {parseFloat(userPosition.yesShares || "0") > 0 && (
+                          <span className="text-sm text-emerald-400 font-mono font-semibold">{parseFloat(userPosition.yesShares).toFixed(4)} Yes</span>
+                        )}
+                        {parseFloat(userPosition.noShares || "0") > 0 && (
+                          <span className="text-sm text-red-400 font-mono font-semibold">{parseFloat(userPosition.noShares).toFixed(4)} No</span>
+                        )}
+                      </div>
                     </div>
                   )}
                 </CardContent>
@@ -484,49 +549,55 @@ const MarketDetail = () => {
               />
             )}
 
-            {/* Trade Panel */}
-            <Card className="border">
-              <CardContent className="p-4">
-                <div className="flex gap-2 mb-4">
+            {/* Trade Panel - Futuristic */}
+            <Card className="relative overflow-hidden bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-slate-800/50 backdrop-blur-xl border-white/10 shadow-[0_0_40px_rgba(168,85,247,0.05)]">
+              <CardContent className="relative p-5">
+                {/* Outcome Tabs with glow effects */}
+                <div className="flex gap-2 mb-5">
                   <button
                     onClick={() => setSelectedOutcome("yes")}
-                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-                      selectedOutcome === "yes"
-                        ? "bg-yes-light text-yes"
-                        : "bg-secondary text-muted-foreground"
-                    }`}
+                    className={`
+                      flex-1 py-3 text-sm font-semibold rounded-lg transition-all duration-300
+                      ${selectedOutcome === "yes"
+                        ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.2)]"
+                        : "bg-white/5 text-white/50 border border-white/10 hover:bg-white/10"
+                      }
+                    `}
                   >
                     Yes {probability}¢
                   </button>
                   <button
                     onClick={() => setSelectedOutcome("no")}
-                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
-                      selectedOutcome === "no"
-                        ? "bg-no-light text-no"
-                        : "bg-secondary text-muted-foreground"
-                    }`}
+                    className={`
+                      flex-1 py-3 text-sm font-semibold rounded-lg transition-all duration-300
+                      ${selectedOutcome === "no"
+                        ? "bg-red-500/20 text-red-400 border border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.2)]"
+                        : "bg-white/5 text-white/50 border border-white/10 hover:bg-white/10"
+                      }
+                    `}
                   >
                     No {100 - probability}¢
                   </button>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-4">
+                  {/* Token Select */}
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block">Trading Token</label>
+                    <label className="text-[10px] text-white/40 uppercase tracking-wider font-mono mb-2 block">Trading Token</label>
                     <Select value={selectedToken} onValueChange={(v) => setSelectedToken(v as TradingToken)}>
-                      <SelectTrigger className="h-10">
+                      <SelectTrigger className="h-11 bg-white/5 border-white/10 text-white/90 focus:border-purple-500/50">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="bg-slate-900 border-white/10">
                         <SelectItem value="ETH">
                           <div className="flex items-center gap-2">
-                            <Coins className="h-4 w-4" />
+                            <Coins className="h-4 w-4 text-blue-400" />
                             <span>ETH (Base Sepolia)</span>
                           </div>
                         </SelectItem>
                         <SelectItem value="USDC">
                           <div className="flex items-center gap-2">
-                            <DollarSign className="h-4 w-4" />
+                            <DollarSign className="h-4 w-4 text-emerald-400" />
                             <span>USDC (Base Sepolia)</span>
                           </div>
                         </SelectItem>
@@ -534,44 +605,62 @@ const MarketDetail = () => {
                     </Select>
                   </div>
 
+                  {/* Amount Input */}
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1.5 block">Amount ({selectedToken})</label>
+                    <label className="text-[10px] text-white/40 uppercase tracking-wider font-mono mb-2 block">Amount ({selectedToken})</label>
                     <Input
                       type="number"
                       placeholder="0.00"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
-                      className="h-10"
+                      className="h-11 bg-white/5 border-white/10 text-white/90 placeholder:text-white/20 focus:border-purple-500/50 font-mono"
                     />
                   </div>
 
-                  <div className="flex justify-between text-sm py-2 border-t border-border">
-                    <span className="text-muted-foreground">Potential return</span>
-                    <span className="font-semibold text-yes">{potentialReturn} {selectedToken}</span>
+                  {/* Potential Return */}
+                  <div className="flex justify-between items-center py-3 px-4 rounded-lg bg-white/[0.02] border border-white/5">
+                    <span className="text-xs text-white/40">Potential return</span>
+                    <span className="text-base font-bold text-emerald-400 font-mono">{potentialReturn} {selectedToken}</span>
                   </div>
 
+                  {/* Blockchain Toggle */}
                   {hasBlockchainContract && (
-                    <div className="flex items-center justify-between py-2 border-t border-border">
-                      <span className="text-xs text-muted-foreground">Trade on blockchain</span>
+                    <div className="flex items-center justify-between py-3 border-t border-white/5">
+                      <span className="text-xs text-white/50">Trade on blockchain</span>
                       <button
                         onClick={() => setUseBlockchain(!useBlockchain)}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                          useBlockchain ? "bg-yes" : "bg-secondary"
-                        }`}
+                        className={`
+                          relative inline-flex h-6 w-11 items-center rounded-full transition-all duration-300
+                          ${useBlockchain 
+                            ? "bg-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.3)]" 
+                            : "bg-white/10"
+                          }
+                        `}
                       >
                         <span
-                          className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                            useBlockchain ? "translate-x-5" : "translate-x-1"
-                          }`}
+                          className={`
+                            inline-block h-4 w-4 transform rounded-full transition-all duration-300
+                            ${useBlockchain 
+                              ? "translate-x-6 bg-emerald-400" 
+                              : "translate-x-1 bg-white/50"
+                            }
+                          `}
                         />
                       </button>
                     </div>
                   )}
 
+                  {/* Trade Button - Tactile depth effect */}
                   <Button 
                     onClick={handleTrade}
                     disabled={isTrading}
-                    className={`w-full gap-2 ${selectedOutcome === "yes" ? "bg-yes hover:bg-yes/90" : "bg-no hover:bg-no/90"}`}
+                    className={`
+                      w-full h-12 gap-2 font-bold text-sm transition-all duration-300
+                      ${selectedOutcome === "yes" 
+                        ? "bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 shadow-[0_4px_0_0_#065f46,0_6px_20px_rgba(16,185,129,0.3)] active:shadow-[0_2px_0_0_#065f46] active:translate-y-[2px]" 
+                        : "bg-gradient-to-b from-red-500 to-red-600 hover:from-red-400 hover:to-red-500 shadow-[0_4px_0_0_#991b1b,0_6px_20px_rgba(239,68,68,0.3)] active:shadow-[0_2px_0_0_#991b1b] active:translate-y-[2px]"
+                      }
+                    `}
                   >
                     {isTrading ? (
                       <>
@@ -587,13 +676,13 @@ const MarketDetail = () => {
                   </Button>
 
                   {!isConnected && (
-                    <p className="text-xs text-center text-muted-foreground">
+                    <p className="text-[10px] text-center text-white/40 font-mono">
                       Connect wallet to start trading
                     </p>
                   )}
 
                   {hasBlockchainContract && useBlockchain && !isOnBase && isConnected && (
-                    <p className="text-xs text-center text-amber-600">
+                    <p className="text-[10px] text-center text-amber-400/80 font-mono">
                       Switch to Base Sepolia for on-chain trading
                     </p>
                   )}
@@ -603,21 +692,23 @@ const MarketDetail = () => {
 
             {/* AI Credits Exhausted Banner */}
             {creditsExhausted && (
-              <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-50 dark:bg-amber-950/20">
+              <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 backdrop-blur-sm">
                 <div className="flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                    <AlertTriangle className="h-4 w-4 text-amber-400" />
+                  </div>
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-amber-700 dark:text-amber-500">
+                    <p className="text-sm font-semibold text-amber-400">
                       AI Credits Exhausted
                     </p>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="text-[10px] text-white/50 mt-1 font-mono">
                       Add credits in your workspace settings to enable AI-powered market analysis.
                     </p>
                     <a
                       href="https://lovable.dev/projects?settings=usage"
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-amber-600 hover:text-amber-700 dark:text-amber-500 dark:hover:text-amber-400"
+                      className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-amber-400 hover:text-amber-300 transition-colors"
                     >
                       Add AI Credits
                       <ExternalLink className="h-3 w-3" />
@@ -627,21 +718,21 @@ const MarketDetail = () => {
               </div>
             )}
 
-            {/* AI Analysis */}
+            {/* AI Analysis Button - Futuristic */}
             <Button
               onClick={handleAnalyze}
               disabled={isAnalyzing || creditsExhausted}
               variant="outline"
-              className="w-full gap-2"
+              className="w-full h-12 gap-2 bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20 hover:border-purple-500/50 text-purple-400 font-semibold transition-all duration-300 shadow-[0_0_20px_rgba(168,85,247,0.1)] hover:shadow-[0_0_30px_rgba(168,85,247,0.2)]"
             >
               {isAnalyzing ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Analyzing with AI...
+                  <span className="animate-pulse">Analyzing with AI...</span>
                 </>
               ) : creditsExhausted ? (
                 <>
-                  <AlertTriangle className="h-4 w-4 text-amber-500" />
+                  <AlertTriangle className="h-4 w-4 text-amber-400" />
                   Credits Required
                 </>
               ) : (
@@ -661,6 +752,17 @@ const MarketDetail = () => {
         open={walletModalOpen} 
         onOpenChange={setWalletModalOpen}
       />
+      
+      {/* Global styles for animations */}
+      <style>{`
+        @keyframes shimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+        .animate-shimmer {
+          animation: shimmer 2s infinite;
+        }
+      `}</style>
     </div>
   );
 };
