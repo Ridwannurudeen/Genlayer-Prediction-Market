@@ -9,6 +9,7 @@ import { IntelligentContractBadge } from "@/components/IntelligentContractBadge"
 import { GenLayerResolution } from "@/components/GenLayerResolution";
 import { ResolutionBridge } from "@/components/ResolutionBridge";
 import { ClaimWinnings } from "@/components/ClaimWinnings";
+import { ManualResolution } from "@/components/ManualResolution";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -547,6 +548,18 @@ const MarketDetail = () => {
                 onResolved={(outcome, reasoning) => {
                   console.log("Market resolved:", outcome === 1 ? "YES" : "NO");
                   console.log("Reasoning:", reasoning);
+                }}
+              />
+            )}
+
+            {/* Manual Resolution - For markets without GenLayer contract (testing) */}
+            {hasBlockchainContract && !hasGenLayerContract && (
+              <ManualResolution
+                baseContractAddress={market.base_contract_address}
+                marketEndDate={market.end_date}
+                marketCreatorAddress={market.created_by}
+                onResolved={() => {
+                  refreshOnChainData();
                 }}
               />
             )}

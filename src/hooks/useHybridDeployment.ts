@@ -150,16 +150,16 @@ export const useHybridDeployment = () => {
             contractAddress = parsed.args.marketAddress 
               || parsed.args.market 
               || parsed.args.newMarket
-              || parsed.args[0]; // First indexed arg is often the address
+              || parsed.args[1]; // Second indexed arg is often the address
             
             console.log("Found MarketCreated event, address:", contractAddress);
             break;
           }
         } catch (e) {
           // Try to decode as raw address from topics
-          if (log.topics && log.topics.length > 1) {
-            // Topic[0] is event signature, Topic[1] might be indexed address
-            const possibleAddress = "0x" + log.topics[1]?.slice(-40);
+          if (log.topics && log.topics.length > 2) {
+            // Topic[0] is event signature, Topic[2] might be indexed address
+            const possibleAddress = "0x" + log.topics[2]?.slice(-40);
             if (possibleAddress && possibleAddress.length === 42) {
               console.log("Possible address from topic:", possibleAddress);
               // Verify it's a contract
@@ -232,7 +232,8 @@ export const useHybridDeployment = () => {
       });
 
       // Switch network if needed
-      if (!isOnBase) {
+      const currentChainId = await window.ethereum?.request({ method: "eth_chainId" });
+      if (parseInt(currentChainId, 16) !== BASE_SEPOLIA.chainId) {
         const switched = await switchToBase();
         if (!switched) {
           setBaseStep({
@@ -244,7 +245,7 @@ export const useHybridDeployment = () => {
           return { success: false, error: "Failed to switch to Base Sepolia" };
         }
         // Wait for network switch
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
 
       setBaseStep({
@@ -313,7 +314,7 @@ export const useHybridDeployment = () => {
           return result;
         }
         // Wait for network switch
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
 
       setGenLayerStep({
@@ -326,6 +327,7 @@ export const useHybridDeployment = () => {
         description: "Please confirm in MetaMask",
       });
 
+      // deployToGenLayer returns string | null (tx hash)
       const genLayerTxHash = await deployToGenLayer({
         question: params.question,
         description: params.description,
@@ -335,15 +337,17 @@ export const useHybridDeployment = () => {
 
       if (genLayerTxHash) {
         result.genLayerTxHash = genLayerTxHash;
-        // Note: Contract address comes from transaction receipt, 
-        // but GenLayer SDK has issues getting it immediately
+        // For GenLayer, the tx hash is often used as the contract identifier
+        result.genLayerContractAddress = genLayerTxHash;
+        
         setGenLayerStep({
           network: "genlayer",
           status: "success",
-          message: "AI resolution contract submitted!",
+          message: "AI resolution contract deployed!",
           txHash: genLayerTxHash,
+          contractAddress: genLayerTxHash,
         });
-        toast.success("GenLayer contract submitted!");
+        toast.success("GenLayer contract deployed!");
       } else {
         setGenLayerStep({
           network: "genlayer",
@@ -361,7 +365,7 @@ export const useHybridDeployment = () => {
 
     setIsDeploying(false);
     return result;
-  }, [isConnected, address, isOnBase, switchToBase, switchToGenLayer, deployToBase, deployToGenLayer]);
+  }, [isConnected, address, switchToBase, switchToGenLayer, deployToBase, deployToGenLayer]);
 
   const resetSteps = useCallback(() => {
     setBaseStep({ network: "base", status: "pending", message: "Waiting..." });

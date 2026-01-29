@@ -29,6 +29,8 @@ const OLD_CONTRACT_ABI = [
   "function sellShares(uint8 _outcome, uint256 _amount)",
   "function claimWinnings()",
   "function resolve(uint8 _winner)",
+  "function owner() view returns (address)",
+  "function creator() view returns (address)",
 ];
 
 interface TradeParams {
@@ -298,6 +300,9 @@ export const useBaseTrading = () => {
 
       setIsPending(true);
 
+      // Known factory address
+      const FACTORY_ADDRESS = "0xB7F06cC21DeE9b1FC0349d08C72fF5c632feC2d7".toLowerCase();
+
       try {
         const provider = await getProvider();
         const signer = await provider.getSigner();
@@ -308,10 +313,85 @@ export const useBaseTrading = () => {
         console.log("Contract:", contractAddress);
         console.log("Winner:", winner === 1 ? "YES" : "NO");
         console.log("Contract type:", contractType);
+        console.log("Current user:", address);
 
         if (contractType === "invalid") {
           toast.error("Contract not found on Base Sepolia");
           return { success: false, error: "Invalid contract" };
+        }
+
+        // Create contract instance for pre-checks
+        const checkContract = new Contract(
+          contractAddress,
+          [
+            "function owner() view returns (address)",
+            "function creator() view returns (address)",
+            "function marketCreator() view returns (address)",
+            "function isResolved() view returns (bool)",
+            "function resolved() view returns (bool)",
+          ],
+          baseSepoliaProvider
+        );
+
+        // Check if already resolved
+        let isAlreadyResolved = false;
+        try {
+          isAlreadyResolved = await checkContract.isResolved();
+        } catch {
+          try {
+            isAlreadyResolved = await checkContract.resolved();
+          } catch {
+            // Function doesn't exist, continue
+          }
+        }
+
+        if (isAlreadyResolved) {
+          toast.error("Market is already resolved");
+          setIsPending(false);
+          return { success: false, error: "Already resolved" };
+        }
+
+        // NOTE: We skip the on-chain endTime check here because:
+        // 1. Factory contracts have minimum 1 day duration
+        // 2. Database end_date is the source of truth for UI
+        // 3. Let the contract's own require() handle the check
+        // This allows testing with shorter durations
+
+        // Check creator (for factory-deployed contracts)
+        let contractCreator: string | null = null;
+        try {
+          contractCreator = await checkContract.creator();
+          console.log("Contract creator:", contractCreator);
+        } catch {
+          try {
+            contractCreator = await checkContract.marketCreator();
+            console.log("Contract marketCreator:", contractCreator);
+          } catch {
+            try {
+              const owner = await checkContract.owner();
+              console.log("Contract owner:", owner);
+              // If owner is factory, we can't determine actual creator from contract
+              if (owner && owner.toLowerCase() !== FACTORY_ADDRESS) {
+                contractCreator = owner;
+              } else {
+                console.log("Owner is factory - will try to resolve anyway");
+              }
+            } catch {
+              console.log("No owner/creator function found");
+            }
+          }
+        }
+
+        // Only block if we found a creator that's definitely not the current user
+        // (and it's not the factory address)
+        if (contractCreator && 
+            contractCreator.toLowerCase() !== address.toLowerCase() &&
+            contractCreator.toLowerCase() !== FACTORY_ADDRESS) {
+          toast.error("Only the market creator can resolve", {
+            description: `Creator: ${contractCreator.slice(0, 8)}...${contractCreator.slice(-6)}`,
+          });
+          setIsPending(false);
+          return { success: false, error: "Not the creator" };
         }
 
         // Use the appropriate resolve function
@@ -321,6 +401,7 @@ export const useBaseTrading = () => {
           signer
         );
         
+        console.log("Calling resolve(" + winner + ")...");
         const tx = await contract.resolve(winner);
         setCurrentTxHash(tx.hash);
         
@@ -332,18 +413,26 @@ export const useBaseTrading = () => {
       } catch (error: any) {
         console.error("Resolve on Base error:", error);
         
-        // Check for common errors
-        if (error?.message?.includes("already resolved")) {
+        // Parse error message for better UX
+        const errorMsg = error?.message || error?.reason || "Unknown error";
+        
+        if (errorMsg.includes("already resolved") || errorMsg.includes("isResolved")) {
           toast.error("Market is already resolved");
-        } else if (error?.message?.includes("not ended")) {
-          toast.error("Market has not ended yet");
-        } else if (error?.message?.includes("only owner") || error?.message?.includes("Ownable")) {
+        } else if (errorMsg.includes("not ended") || errorMsg.includes("endDate") || errorMsg.includes("too early")) {
+          toast.error("Market has not ended yet (on-chain)", {
+            description: "Factory contracts have minimum 1 day duration. Wait or create a new market.",
+          });
+        } else if (errorMsg.includes("owner") || errorMsg.includes("Ownable") || errorMsg.includes("creator")) {
           toast.error("Only the market creator can resolve");
+        } else if (errorMsg.includes("require(false)") || errorMsg.includes("CALL_EXCEPTION")) {
+          toast.error("Transaction reverted", {
+            description: "Contract rejected. Likely: market not ended (1 day minimum) or not the creator.",
+          });
         } else {
-          toast.error("Failed to resolve market", { description: error?.message });
+          toast.error("Failed to resolve market", { description: errorMsg.slice(0, 100) });
         }
         
-        return { success: false, error: error?.message };
+        return { success: false, error: errorMsg };
       } finally {
         setIsPending(false);
       }
