@@ -7,7 +7,19 @@ import { useBaseTrading } from "@/hooks/useBaseTrading";
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
 import { Contract, JsonRpcProvider } from "ethers";
 
-const baseSepoliaProvider = new JsonRpcProvider("https://sepolia.base.org");
+// Provider with fallback
+let baseSepoliaProvider = new JsonRpcProvider("https://sepolia.base.org");
+
+const getProvider = async (): Promise<JsonRpcProvider> => {
+  try {
+    await baseSepoliaProvider.getBlockNumber();
+    return baseSepoliaProvider;
+  } catch {
+    console.log("Primary RPC failed, trying fallback...");
+    baseSepoliaProvider = new JsonRpcProvider("https://base-sepolia-rpc.publicnode.com");
+    return baseSepoliaProvider;
+  }
+};
 
 // Known factory address - contracts deployed by this are factory-created
 const FACTORY_ADDRESS = "0xB7F06cC21DeE9b1FC0349d08C72fF5c632feC2d7".toLowerCase();
@@ -59,6 +71,7 @@ export const ManualResolution = ({
       }
 
       try {
+        const provider = await getProvider();
         const contract = new Contract(
           baseContractAddress,
           [
@@ -70,7 +83,7 @@ export const ManualResolution = ({
             "function endDate() view returns (uint256)",
             "function endTime() view returns (uint256)",
           ],
-          baseSepoliaProvider
+          provider
         );
 
         // Get on-chain end time

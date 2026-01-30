@@ -64,6 +64,7 @@ const MarketDetail = () => {
   } | null>(null);
   const [userPosition, setUserPosition] = useState<{ yesShares: string; noShares: string } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [contractValid, setContractValid] = useState<boolean | null>(null); // null = not checked yet
 
   // Function to refresh on-chain data
   const refreshOnChainData = useCallback(async () => {
@@ -83,10 +84,16 @@ const MarketDetail = () => {
           isResolved: data.isResolved,
           winner: data.winner,
         });
+        setContractValid(true);
         console.log("Updated pools - Yes:", data.yesShares, "No:", data.noShares);
+      } else {
+        // Contract address exists in DB but not on-chain
+        setContractValid(false);
+        console.log("Contract not found on-chain");
       }
     } catch (err) {
       console.error("Failed to read market data:", err);
+      setContractValid(false);
     }
 
     try {
@@ -375,6 +382,16 @@ const MarketDetail = () => {
                     </span>
                   </div>
                 </div>
+
+                {/* Warning if contract not found on-chain */}
+                {market.base_contract_address && contractValid === false && (
+                  <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                    <div className="flex items-center gap-2 text-amber-400 text-sm">
+                      <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                      <span>Contract not found on Base Sepolia. Trading may not be available.</span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Buy Buttons - Depth-based design with micro-interactions */}
                 <div className="grid grid-cols-2 gap-4">
