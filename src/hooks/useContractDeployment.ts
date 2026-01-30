@@ -38,15 +38,24 @@ export const useContractDeployment = () => {
         return null;
       }
 
-      // Check if on GenLayer network
-      if (chainId !== 4221) {
-        toast.info("Please switch to GenLayer Testnet", {
-          action: {
-            label: "Switch Network",
-            onClick: switchToGenLayer,
-          },
-        });
-        return null;
+      // Check current network directly from wallet (not React state which may be stale)
+      try {
+        const currentChainId = await window.ethereum?.request({ method: "eth_chainId" });
+        const currentChainIdNum = parseInt(currentChainId, 16);
+        
+        console.log("GenLayer deployment - Current chainId:", currentChainIdNum, "Expected: 4221");
+        
+        if (currentChainIdNum !== 4221) {
+          toast.info("Please switch to GenLayer Testnet", {
+            action: {
+              label: "Switch Network",
+              onClick: switchToGenLayer,
+            },
+          });
+          return null;
+        }
+      } catch (e) {
+        console.error("Could not check chainId:", e);
       }
 
       try {
@@ -58,6 +67,10 @@ export const useContractDeployment = () => {
 
         const contractCode = generatePredictionMarketContract(params);
         const constructorArgs = getContractConstructorArgs(params);
+        
+        console.log("=== GENLAYER DEPLOYMENT ===");
+        console.log("Question:", params.question);
+        console.log("Resolution source:", params.resolutionSource);
 
         // Step 2: Deploy contract
         setStatus({
@@ -75,10 +88,9 @@ export const useContractDeployment = () => {
         });
 
         const txHashStr = String(transactionHash);
+        console.log("GenLayer TX Hash:", txHashStr);
 
         // Mark as success immediately after deployment submission
-        // The waitForTransactionReceipt has a bug in the SDK causing position errors
-        // Users can check the transaction status on the explorer
         setStatus({
           step: "success",
           message: "Contract deployment submitted to GenLayer!",
@@ -100,7 +112,7 @@ export const useContractDeployment = () => {
 
         return txHashStr;
       } catch (error: any) {
-        console.error("Deployment error:", error);
+        console.error("GenLayer deployment error:", error);
 
         // Handle user rejection
         if (error?.code === 4001 || error?.message?.includes("rejected")) {
@@ -119,14 +131,14 @@ export const useContractDeployment = () => {
           error: error?.message || "Unknown error occurred",
         });
 
-        toast.error("Deployment failed", {
+        toast.error("GenLayer deployment failed", {
           description: error?.message || "Unknown error occurred",
         });
 
         return null;
       }
     },
-    [isConnected, address, chainId, switchToGenLayer, getClient]
+    [isConnected, address, switchToGenLayer, getClient]
   );
 
   const resetStatus = useCallback(() => {

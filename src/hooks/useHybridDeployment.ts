@@ -301,7 +301,7 @@ export const useHybridDeployment = () => {
       });
 
       // Switch network if needed
-      const currentChainId = await window.ethereum?.request({ method: "eth_chainId" });
+      let currentChainId = await window.ethereum?.request({ method: "eth_chainId" });
       if (parseInt(currentChainId, 16) !== GENLAYER.chainId) {
         const switched = await switchToGenLayer();
         if (!switched) {
@@ -313,8 +313,30 @@ export const useHybridDeployment = () => {
           setIsDeploying(false);
           return result;
         }
-        // Wait for network switch
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        // Wait for network switch and verify
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Verify we're actually on GenLayer now
+        currentChainId = await window.ethereum?.request({ method: "eth_chainId" });
+        const currentChainNum = parseInt(currentChainId, 16);
+        console.log("After switch - chainId:", currentChainNum, "Expected:", GENLAYER.chainId);
+        
+        if (currentChainNum !== GENLAYER.chainId) {
+          // Try one more time
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          currentChainId = await window.ethereum?.request({ method: "eth_chainId" });
+          if (parseInt(currentChainId, 16) !== GENLAYER.chainId) {
+            setGenLayerStep({
+              network: "genlayer",
+              status: "error",
+              message: "Network switch not confirmed. Please try again.",
+            });
+            toast.error("Please switch to GenLayer manually and try again");
+            setIsDeploying(false);
+            return result;
+          }
+        }
       }
 
       setGenLayerStep({

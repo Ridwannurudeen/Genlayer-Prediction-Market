@@ -9,11 +9,24 @@ const BASE_SEPOLIA = {
   chainIdHex: "0x14a34",
   name: "Base Sepolia",
   rpc: "https://sepolia.base.org",
+  rpcFallback: "https://base-sepolia-rpc.publicnode.com",
   explorer: "https://sepolia.basescan.org",
 };
 
 // Dedicated read-only provider for Base Sepolia (doesn't depend on wallet network)
-const baseSepoliaProvider = new JsonRpcProvider(BASE_SEPOLIA.rpc);
+let baseSepoliaProvider = new JsonRpcProvider(BASE_SEPOLIA.rpc);
+
+// Helper to check and switch RPC if needed
+const ensureProvider = async (): Promise<JsonRpcProvider> => {
+  try {
+    await baseSepoliaProvider.getBlockNumber();
+    return baseSepoliaProvider;
+  } catch {
+    console.log("Primary RPC failed, trying fallback...");
+    baseSepoliaProvider = new JsonRpcProvider(BASE_SEPOLIA.rpcFallback);
+    return baseSepoliaProvider;
+  }
+};
 
 // ABI for OLD manually deployed contracts - uses buyShares()
 const OLD_CONTRACT_ABI = [
@@ -61,8 +74,17 @@ interface UserPosition {
   noShares: string;
 }
 
-// Cache for contract types
+// Cache for contract types (only caches valid results)
 const contractTypeCache: Record<string, "old" | "new" | "invalid"> = {};
+
+// Clear contract cache (useful when retrying after errors)
+export const clearContractCache = (contractAddress?: string) => {
+  if (contractAddress) {
+    delete contractTypeCache[contractAddress];
+  } else {
+    Object.keys(contractTypeCache).forEach(key => delete contractTypeCache[key]);
+  }
+};
 
 export const useBaseTrading = () => {
   const { address, isConnected, chainId } = useWalletAuth();
@@ -80,7 +102,8 @@ export const useBaseTrading = () => {
   const contractExists = useCallback(
     async (contractAddress: string): Promise<boolean> => {
       try {
-        const code = await baseSepoliaProvider.getCode(contractAddress);
+        const provider = await ensureProvider();
+        const code = await provider.getCode(contractAddress);
         const exists = code !== "0x" && code.length > 2;
         console.log("Contract exists check on Base Sepolia:", contractAddress, exists);
         return exists;
@@ -95,32 +118,52 @@ export const useBaseTrading = () => {
   // Detect contract type (uses dedicated Base Sepolia RPC)
   const detectContractType = useCallback(
     async (contractAddress: string): Promise<"old" | "new" | "invalid"> => {
-      if (contractTypeCache[contractAddress]) {
+      // Only use cache for valid results, not for invalid
+      if (contractTypeCache[contractAddress] && contractTypeCache[contractAddress] !== "invalid") {
         return contractTypeCache[contractAddress];
       }
 
-      const exists = await contractExists(contractAddress);
-      if (!exists) {
-        console.log("Contract does not exist on Base Sepolia:", contractAddress);
-        contractTypeCache[contractAddress] = "invalid";
+      // Validate address format
+      if (!contractAddress || !contractAddress.startsWith("0x") || contractAddress.length !== 42) {
+        console.log("Invalid contract address format:", contractAddress);
         return "invalid";
       }
 
-      // Try OLD contract (has totalShares with uint8 param)
       try {
-        const oldContract = new Contract(contractAddress, OLD_CONTRACT_ABI, baseSepoliaProvider);
-        await oldContract.totalShares(1);
-        console.log("Detected OLD contract");
-        contractTypeCache[contractAddress] = "old";
-        return "old";
-      } catch {
-        // Not old contract, assume new
-        console.log("Detected NEW factory contract");
-        contractTypeCache[contractAddress] = "new";
-        return "new";
+        // Ensure provider is working
+        const provider = await ensureProvider();
+        
+        const code = await provider.getCode(contractAddress);
+        const exists = code !== "0x" && code.length > 2;
+        
+        console.log("Contract exists check:", contractAddress, "exists:", exists, "code length:", code.length);
+        
+        if (!exists) {
+          console.log("Contract does not exist on Base Sepolia:", contractAddress);
+          // Don't cache invalid - might be temporary RPC issue
+          return "invalid";
+        }
+
+        // Try OLD contract (has totalShares with uint8 param)
+        try {
+          const oldContract = new Contract(contractAddress, OLD_CONTRACT_ABI, provider);
+          await oldContract.totalShares(1);
+          console.log("Detected OLD contract");
+          contractTypeCache[contractAddress] = "old";
+          return "old";
+        } catch {
+          // Not old contract, assume new factory contract
+          console.log("Detected NEW factory contract");
+          contractTypeCache[contractAddress] = "new";
+          return "new";
+        }
+      } catch (error) {
+        console.error("Contract detection error:", error);
+        // Don't cache - might be network issue
+        return "invalid";
       }
     },
-    [contractExists]
+    []
   );
 
   const buyShares = useCallback(
@@ -149,7 +192,9 @@ export const useBaseTrading = () => {
         console.log("Amount:", params.amount, "ETH");
 
         if (contractType === "invalid") {
-          toast.error("Contract not found on Base Sepolia");
+          toast.error("Trading not available", {
+            description: "This market's contract was not found on Base Sepolia.",
+          });
           return { success: false, error: "Invalid contract" };
         }
 
@@ -316,11 +361,14 @@ export const useBaseTrading = () => {
         console.log("Current user:", address);
 
         if (contractType === "invalid") {
-          toast.error("Contract not found on Base Sepolia");
+          toast.error("Resolution not available", {
+            description: "This market's contract was not found on Base Sepolia.",
+          });
           return { success: false, error: "Invalid contract" };
         }
 
         // Create contract instance for pre-checks
+        const readProvider = await ensureProvider();
         const checkContract = new Contract(
           contractAddress,
           [
@@ -330,7 +378,7 @@ export const useBaseTrading = () => {
             "function isResolved() view returns (bool)",
             "function resolved() view returns (bool)",
           ],
-          baseSepoliaProvider
+          readProvider
         );
 
         // Check if already resolved
@@ -443,7 +491,8 @@ export const useBaseTrading = () => {
   // Helper to safely call a contract function on Base Sepolia
   const safeCall = async (contractAddress: string, abi: string[], functionName: string, args: any[] = []): Promise<any> => {
     try {
-      const contract = new Contract(contractAddress, abi, baseSepoliaProvider);
+      const provider = await ensureProvider();
+      const contract = new Contract(contractAddress, abi, provider);
       return await contract[functionName](...args);
     } catch {
       return null;
@@ -455,6 +504,7 @@ export const useBaseTrading = () => {
       try {
         // Use dedicated Base Sepolia provider for reads (works regardless of wallet network)
         const contractType = await detectContractType(contractAddress);
+        const provider = await ensureProvider();
 
         console.log("=== READ MARKET DATA ===");
         console.log("Contract:", contractAddress);
@@ -466,7 +516,7 @@ export const useBaseTrading = () => {
 
         if (contractType === "old") {
           try {
-            const contract = new Contract(contractAddress, OLD_CONTRACT_ABI, baseSepoliaProvider);
+            const contract = new Contract(contractAddress, OLD_CONTRACT_ABI, provider);
             const [question, description, endDate, isResolved, winner, totalPool, yesShares, noShares] =
               await Promise.all([
                 contract.question(),
@@ -515,7 +565,7 @@ export const useBaseTrading = () => {
 
         for (const pair of poolFunctionPairs) {
           try {
-            const contract = new Contract(contractAddress, pair.abi, baseSepoliaProvider);
+            const contract = new Contract(contractAddress, pair.abi, provider);
             yesPool = await contract[pair.yes]();
             noPool = await contract[pair.no]();
             console.log(`Read ${pair.yes}/${pair.no}:`, formatEther(yesPool), formatEther(noPool));
@@ -584,13 +634,14 @@ export const useBaseTrading = () => {
       try {
         // Use dedicated Base Sepolia provider for reads
         const contractType = await detectContractType(contractAddress);
+        const provider = await ensureProvider();
 
         if (contractType === "invalid") {
           return null;
         }
 
         if (contractType === "old") {
-          const contract = new Contract(contractAddress, OLD_CONTRACT_ABI, baseSepoliaProvider);
+          const contract = new Contract(contractAddress, OLD_CONTRACT_ABI, provider);
           const [yesShares, noShares] = await Promise.all([
             contract.userShares(address, 1),
             contract.userShares(address, 2),
@@ -611,7 +662,7 @@ export const useBaseTrading = () => {
           const contract = new Contract(contractAddress, [
             "function yesShares(address) view returns (uint256)",
             "function noShares(address) view returns (uint256)",
-          ], baseSepoliaProvider);
+          ], provider);
           yesShares = await contract.yesShares(address);
           noShares = await contract.noShares(address);
           console.log("Read user shares - Yes:", formatEther(yesShares), "No:", formatEther(noShares));
@@ -620,7 +671,7 @@ export const useBaseTrading = () => {
           try {
             const contract = new Contract(contractAddress, [
               "function shares(address,bool) view returns (uint256)",
-            ], baseSepoliaProvider);
+            ], provider);
             yesShares = await contract.shares(address, true);
             noShares = await contract.shares(address, false);
           } catch {
@@ -629,7 +680,7 @@ export const useBaseTrading = () => {
               const contract = new Contract(contractAddress, [
                 "function userYesShares(address) view returns (uint256)",
                 "function userNoShares(address) view returns (uint256)",
-              ], baseSepoliaProvider);
+              ], provider);
               yesShares = await contract.userYesShares(address);
               noShares = await contract.userNoShares(address);
             } catch {
