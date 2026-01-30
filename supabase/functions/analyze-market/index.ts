@@ -1,4 +1,9 @@
+// supabase/functions/analyze-market/index.ts
+// Deploy with: supabase functions deploy analyze-market --no-verify-jwt
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+
+const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,113 +16,119 @@ interface MarketData {
   probability: number;
   volume: number;
   category: string;
+  description?: string;
 }
 
 serve(async (req) => {
+  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { marketData } = await req.json() as { marketData: MarketData };
-    
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+    if (!ANTHROPIC_API_KEY) {
+      throw new Error("ANTHROPIC_API_KEY not configured");
     }
 
-    const systemPrompt = `You are a prediction market analyst AI. Analyze market data and provide insights.
-Your response must be a JSON object with this exact structure:
-{
-  "summary": "2-3 sentence analysis of market sentiment and key drivers",
-  "riskLevel": "low" | "medium" | "high",
-  "confidenceScore": number between 0-100,
-  "factors": ["factor1", "factor2", "factor3", "factor4"]
-}
+    const { marketData } = await req.json() as { marketData: MarketData };
 
-Consider:
-- Current probability and what it implies
-- Trading volume as indicator of market confidence
-- Category-specific factors
-- Potential catalysts or risks
+    if (!marketData || !marketData.title) {
+      throw new Error("Invalid market data");
+    }
 
-Respond ONLY with valid JSON, no markdown or explanations.`;
-
-    const userPrompt = `Analyze this prediction market:
-Title: ${marketData.title}
-Current Probability: ${marketData.probability}%
-Trading Volume: $${marketData.volume.toLocaleString()}
-Category: ${marketData.category}
-
-Provide your analysis as JSON.`;
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    // Call Anthropic API
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "claude-3-haiku-20240307",
+        max_tokens: 500,
         messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
+          {
+            role: "user",
+            content: `You are a prediction market analyst. Analyze this market and provide insights.
+
+Market: "${marketData.title}"
+Category: ${marketData.category}
+Current Probability: ${marketData.probability}% YES
+Trading Volume: $${marketData.volume}
+${marketData.description ? `Description: ${marketData.description}` : ""}
+
+Provide a JSON response with:
+1. "insight": A 2-3 sentence analysis of this market (what factors matter, current sentiment)
+2. "confidence": A number 0.0-1.0 indicating how reliable this prediction is
+3. "risk": Either "low", "medium", or "high"
+4. "factors": An array of 3-4 key factors that could influence the outcome
+
+Respond ONLY with valid JSON, no other text.`,
+          },
         ],
       }),
     });
 
     if (!response.ok) {
-      // IMPORTANT: return 200 so the client doesn't treat this as a hard function failure.
-      // We still surface the error via a structured payload.
+      const error = await response.text();
+      console.error("Anthropic API error:", error);
+      
       if (response.status === 429) {
-        return new Response(
-          JSON.stringify({
-            error: "Rate limit exceeded. Please try again later.",
-            code: 429,
-          }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ code: 429, error: "Rate limited" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 200,
+        });
       }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({
-            error: "AI credits exhausted. Please add credits to continue.",
-            code: 402,
-          }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      throw new Error("AI analysis failed");
+      
+      throw new Error(`Anthropic API error: ${response.status}`);
     }
 
-    const aiResponse = await response.json();
-    const content = aiResponse.choices?.[0]?.message?.content;
+    const data = await response.json();
+    const content = data.content[0]?.text;
 
-    if (!content) {
-      throw new Error("No content in AI response");
+    // Parse the JSON response from Claude
+    let analysis;
+    try {
+      // Try to extract JSON from the response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        analysis = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error("No JSON found in response");
+      }
+    } catch (parseError) {
+      console.error("Failed to parse Claude response:", content);
+      // Fallback analysis
+      analysis = {
+        insight: `Based on the ${marketData.probability}% probability and market activity, this prediction shows ${marketData.probability > 60 ? "bullish" : marketData.probability < 40 ? "bearish" : "uncertain"} sentiment.`,
+        confidence: 0.7,
+        risk: marketData.probability > 80 || marketData.probability < 20 ? "high" : "medium",
+        factors: ["Market sentiment", "Trading volume", "Historical patterns"],
+      };
     }
-
-    // Parse the JSON response
-    const cleanContent = content.replace(/```json\n?|\n?```/g, "").trim();
-    const insight = JSON.parse(cleanContent);
 
     return new Response(
       JSON.stringify({
-        insight: insight.summary,
-        confidence: insight.confidenceScore,
-        risk: insight.riskLevel,
-        factors: insight.factors,
+        insight: analysis.insight,
+        confidence: Math.min(1, Math.max(0, analysis.confidence || 0.7)),
+        risk: ["low", "medium", "high"].includes(analysis.risk) ? analysis.risk : "medium",
+        factors: Array.isArray(analysis.factors) ? analysis.factors.slice(0, 5) : ["Market dynamics"],
         verified: true,
       }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      }
     );
   } catch (error) {
-    console.error("analyze-market error:", error);
+    console.error("Analysis error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Analysis failed" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ error: error.message }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500,
+      }
     );
   }
 });
