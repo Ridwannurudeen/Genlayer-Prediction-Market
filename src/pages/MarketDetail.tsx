@@ -19,6 +19,7 @@ import { useMarket } from "@/hooks/useMarkets";
 import { useMarketAnalysis } from "@/hooks/useMarketAnalysis";
 import { useCreateTrade } from "@/hooks/usePositions";
 import { useBaseTrading } from "@/hooks/useBaseTrading";
+import { useGenLayerBackfill } from "@/hooks/useGenLayerBackfill";
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
 import { WalletModal } from "@/components/WalletModal";
 import { AIInsight } from "@/types/market";
@@ -48,6 +49,7 @@ const MarketDetail = () => {
   const { analyzeMarket, isAnalyzing, creditsExhausted } = useMarketAnalysis();
   const createTrade = useCreateTrade();
   const { buyShares, isPending: isBlockchainPending, isOnBase, readMarketData, getUserPosition } = useBaseTrading();
+  const { backfillContractAddress } = useGenLayerBackfill();
   const { isConnected, address, chainId, switchToBase } = useWalletAuth();
   
   const [liveInsight, setLiveInsight] = useState<AIInsight | null>(null);
@@ -65,6 +67,7 @@ const MarketDetail = () => {
   const [userPosition, setUserPosition] = useState<{ yesShares: string; noShares: string } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [contractValid, setContractValid] = useState<boolean | null>(null); // null = not checked yet
+  const [backfillAttempted, setBackfillAttempted] = useState(false);
 
   // Function to refresh on-chain data
   const refreshOnChainData = useCallback(async () => {
@@ -113,6 +116,19 @@ const MarketDetail = () => {
       refreshOnChainData();
     }
   }, [market?.base_contract_address, isConnected, refreshOnChainData]);
+
+  // Backfill GenLayer contract address from stored tx hash if needed
+  useEffect(() => {
+    if (!market || backfillAttempted) return;
+    if (!market.intelligent_contract_address && market.genlayer_resolution_address) {
+      setBackfillAttempted(true);
+      void backfillContractAddress({
+        id: market.id,
+        intelligent_contract_address: market.intelligent_contract_address,
+        genlayer_resolution_address: market.genlayer_resolution_address,
+      });
+    }
+  }, [market, backfillAttempted, backfillContractAddress]);
 
   // Calculate live probability from on-chain pool data
   const calculateProbability = useCallback(() => {
@@ -205,9 +221,10 @@ const MarketDetail = () => {
       }
       
       setAmount("");
-    } catch (error: any) {
-      if (!error.message?.includes("rejected")) {
-        toast.error(error.message || "Trade failed");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Trade failed";
+      if (!message.includes("rejected")) {
+        toast.error(message);
       }
     }
   };

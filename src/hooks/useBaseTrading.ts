@@ -13,6 +13,8 @@ const BASE_SEPOLIA = {
   explorer: "https://sepolia.basescan.org",
 };
 
+const SHARE_PRICE_WEI = 1_000_000_000_000_000n; // 0.001 ETH
+
 // Dedicated read-only provider for Base Sepolia (doesn't depend on wallet network)
 let baseSepoliaProvider = new JsonRpcProvider(BASE_SEPOLIA.rpc);
 
@@ -229,14 +231,16 @@ export const useBaseTrading = () => {
         toast.success(`Bought ${params.positionType.toUpperCase()} shares!`);
         
         return { success: true, transactionHash: tx.hash };
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Buy shares error:", error);
-        if (error?.code === 4001 || error?.message?.includes("rejected")) {
+        const err = error as { code?: number | string; message?: string };
+        if (err?.code === 4001 || err?.message?.includes("rejected")) {
           toast.error("Transaction rejected");
           return { success: false, error: "Transaction rejected" };
         }
-        toast.error("Transaction failed", { description: error?.message?.slice(0, 100) });
-        return { success: false, error: error?.message };
+        const message = err?.message || "Unknown error";
+        toast.error("Transaction failed", { description: message.slice(0, 100) });
+        return { success: false, error: message };
       } finally {
         setIsPending(false);
       }
@@ -268,6 +272,11 @@ export const useBaseTrading = () => {
           return { success: false, error: "Invalid contract" };
         }
 
+        if (contractType === "new") {
+          toast.error("Sell not supported on factory markets");
+          return { success: false, error: "Sell not supported" };
+        }
+
         const contract = new Contract(params.contractAddress, OLD_CONTRACT_ABI, signer);
         const outcome = params.positionType === "yes" ? 1 : 2;
         const tx = await contract.sellShares(outcome, parseEther(params.shares.toString()));
@@ -277,10 +286,12 @@ export const useBaseTrading = () => {
 
         toast.success("Shares sold!");
         return { success: true, transactionHash: tx.hash };
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Sell shares error:", error);
-        toast.error("Failed to sell shares", { description: error?.message });
-        return { success: false, error: error?.message };
+        const err = error as { message?: string };
+        const message = err?.message || "Unknown error";
+        toast.error("Failed to sell shares", { description: message });
+        return { success: false, error: message };
       } finally {
         setIsPending(false);
       }
@@ -313,10 +324,12 @@ export const useBaseTrading = () => {
 
         toast.success("Winnings claimed!");
         return { success: true, transactionHash: tx.hash };
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Claim winnings error:", error);
-        toast.error("Failed to claim winnings", { description: error?.message });
-        return { success: false, error: error?.message };
+        const err = error as { message?: string };
+        const message = err?.message || "Unknown error";
+        toast.error("Failed to claim winnings", { description: message });
+        return { success: false, error: message };
       } finally {
         setIsPending(false);
       }
@@ -443,14 +456,25 @@ export const useBaseTrading = () => {
         }
 
         // Use the appropriate resolve function
-        const contract = new Contract(
-          contractAddress, 
-          ["function resolve(uint8 _winner)"], 
-          signer
-        );
-        
-        console.log("Calling resolve(" + winner + ")...");
-        const tx = await contract.resolve(winner);
+        let tx;
+        if (contractType === "old") {
+          const contract = new Contract(
+            contractAddress, 
+            ["function resolve(uint8 _winner)"], 
+            signer
+          );
+          console.log("Calling resolve(" + winner + ") on OLD contract...");
+          tx = await contract.resolve(winner);
+        } else {
+          const contract = new Contract(
+            contractAddress, 
+            ["function resolve(bool _yesWins)"], 
+            signer
+          );
+          const yesWins = winner === 1;
+          console.log("Calling resolve(" + yesWins + ") on NEW contract...");
+          tx = await contract.resolve(yesWins);
+        }
         setCurrentTxHash(tx.hash);
         
         console.log("Resolution TX Hash:", tx.hash);
@@ -458,11 +482,12 @@ export const useBaseTrading = () => {
 
         toast.success(`Market resolved as ${winner === 1 ? "YES" : "NO"}!`);
         return { success: true, transactionHash: tx.hash };
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Resolve on Base error:", error);
         
+        const err = error as { message?: string; reason?: string };
         // Parse error message for better UX
-        const errorMsg = error?.message || error?.reason || "Unknown error";
+        const errorMsg = err?.message || err?.reason || "Unknown error";
         
         if (errorMsg.includes("already resolved") || errorMsg.includes("isResolved")) {
           toast.error("Market is already resolved");
@@ -487,17 +512,6 @@ export const useBaseTrading = () => {
     },
     [isConnected, address, isOnBase, getProvider, detectContractType]
   );
-
-  // Helper to safely call a contract function on Base Sepolia
-  const safeCall = async (contractAddress: string, abi: string[], functionName: string, args: any[] = []): Promise<any> => {
-    try {
-      const provider = await ensureProvider();
-      const contract = new Contract(contractAddress, abi, provider);
-      return await contract[functionName](...args);
-    } catch {
-      return null;
-    }
-  };
 
   const readMarketData = useCallback(
     async (contractAddress: string): Promise<MarketData | null> => {
@@ -545,80 +559,63 @@ export const useBaseTrading = () => {
           }
         }
 
-        // NEW factory contract - try multiple possible function names
-        let yesPool = BigInt(0);
-        let noPool = BigInt(0);
-        let question = "";
-        let description = "";
-        let endDate = 0;
-        let isResolved = false;
-        let winner = 0;
-        let readSuccess = false;
+        // NEW factory contract (PredictionMarket.sol)
+        try {
+          const contract = new Contract(
+            contractAddress,
+            [
+              "function question() view returns (string)",
+              "function description() view returns (string)",
+              "function endTime() view returns (uint256)",
+              "function isResolved() view returns (bool)",
+              "function winningOutcome() view returns (bool)",
+              "function totalYesShares() view returns (uint256)",
+              "function totalNoShares() view returns (uint256)",
+              "function totalPool() view returns (uint256)",
+            ],
+            provider
+          );
 
-        // List of possible pool function pairs to try
-        const poolFunctionPairs = [
-          { yes: "yesPool", no: "noPool", abi: ["function yesPool() view returns (uint256)", "function noPool() view returns (uint256)"] },
-          { yes: "totalYesShares", no: "totalNoShares", abi: ["function totalYesShares() view returns (uint256)", "function totalNoShares() view returns (uint256)"] },
-          { yes: "yesTotal", no: "noTotal", abi: ["function yesTotal() view returns (uint256)", "function noTotal() view returns (uint256)"] },
-          { yes: "yesAmount", no: "noAmount", abi: ["function yesAmount() view returns (uint256)", "function noAmount() view returns (uint256)"] },
-        ];
+          const [
+            question,
+            description,
+            endTime,
+            isResolved,
+            winningOutcome,
+            totalYesShares,
+            totalNoShares,
+            totalPool,
+          ] = await Promise.all([
+            contract.question(),
+            contract.description(),
+            contract.endTime(),
+            contract.isResolved(),
+            contract.winningOutcome(),
+            contract.totalYesShares(),
+            contract.totalNoShares(),
+            contract.totalPool(),
+          ]);
 
-        for (const pair of poolFunctionPairs) {
-          try {
-            const contract = new Contract(contractAddress, pair.abi, provider);
-            yesPool = await contract[pair.yes]();
-            noPool = await contract[pair.no]();
-            console.log(`Read ${pair.yes}/${pair.no}:`, formatEther(yesPool), formatEther(noPool));
-            readSuccess = true;
-            break;
-          } catch {
-            console.log(`${pair.yes}/${pair.no} not available`);
-          }
+          const yesPool = totalYesShares * SHARE_PRICE_WEI;
+          const noPool = totalNoShares * SHARE_PRICE_WEI;
+          const winner = isResolved ? (winningOutcome ? 1 : 2) : 0;
+
+          console.log("Final pool data - Yes:", formatEther(yesPool), "No:", formatEther(noPool));
+
+          return {
+            question,
+            description,
+            endDate: Number(endTime),
+            isResolved,
+            winner,
+            totalPool: formatEther(totalPool),
+            yesShares: formatEther(yesPool),
+            noShares: formatEther(noPool),
+          };
+        } catch (error) {
+          console.error("Error reading NEW contract:", error);
+          return null;
         }
-
-        // Try question
-        const questionResult = await safeCall(contractAddress, ["function question() view returns (string)"], "question");
-        if (questionResult) question = questionResult;
-
-        // Try description  
-        const descResult = await safeCall(contractAddress, ["function description() view returns (string)"], "description");
-        if (descResult) description = descResult;
-
-        // Try endTime or endDate
-        let endTimeResult = await safeCall(contractAddress, ["function endTime() view returns (uint256)"], "endTime");
-        if (!endTimeResult) {
-          endTimeResult = await safeCall(contractAddress, ["function endDate() view returns (uint256)"], "endDate");
-        }
-        if (endTimeResult) endDate = Number(endTimeResult);
-
-        // Try resolved status
-        let resolvedResult = await safeCall(contractAddress, ["function resolved() view returns (bool)"], "resolved");
-        if (resolvedResult === null) {
-          resolvedResult = await safeCall(contractAddress, ["function isResolved() view returns (bool)"], "isResolved");
-        }
-        if (resolvedResult !== null) isResolved = resolvedResult;
-
-        // Try winner/outcome
-        let winnerResult = await safeCall(contractAddress, ["function outcome() view returns (uint8)"], "outcome");
-        if (winnerResult === null) {
-          winnerResult = await safeCall(contractAddress, ["function winner() view returns (uint8)"], "winner");
-        }
-        if (winnerResult !== null) winner = Number(winnerResult);
-
-        const totalPool = yesPool + noPool;
-
-        console.log("Final pool data - Yes:", formatEther(yesPool), "No:", formatEther(noPool));
-
-        return {
-          question,
-          description,
-          endDate,
-          isResolved,
-          winner,
-          totalPool: formatEther(totalPool),
-          yesShares: formatEther(yesPool),
-          noShares: formatEther(noPool),
-        };
       } catch (error) {
         console.error("Read market data error:", error);
         return null;
@@ -665,7 +662,7 @@ export const useBaseTrading = () => {
           ], provider);
           yesShares = await contract.yesShares(address);
           noShares = await contract.noShares(address);
-          console.log("Read user shares - Yes:", formatEther(yesShares), "No:", formatEther(noShares));
+          console.log("Read user shares - Yes:", yesShares.toString(), "No:", noShares.toString());
         } catch {
           // Try shares(address, bool)
           try {
@@ -690,8 +687,8 @@ export const useBaseTrading = () => {
         }
 
         return {
-          yesShares: formatEther(yesShares),
-          noShares: formatEther(noShares),
+          yesShares: yesShares.toString(),
+          noShares: noShares.toString(),
         };
       } catch (error) {
         console.error("Get user position error:", error);

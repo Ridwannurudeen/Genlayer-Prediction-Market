@@ -139,7 +139,9 @@ export const ManualResolution = ({
         } catch {
           try {
             resolved = await contract.resolved();
-          } catch {}
+          } catch {
+            // Legacy contracts may not expose a resolved() view
+          }
         }
         setAlreadyResolved(resolved);
 

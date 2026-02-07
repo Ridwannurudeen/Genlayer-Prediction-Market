@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { createClient } from "genlayer-js";
 import { testnetAsimov } from "genlayer-js/chains";
+import { TransactionStatus } from "genlayer-js/types";
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
 import { generatePredictionMarketContract, getContractConstructorArgs, ContractParams } from "@/lib/contractGenerator";
 import { toast } from "sonner";
@@ -13,8 +14,13 @@ export interface DeploymentStatus {
   error?: string;
 }
 
+export interface GenLayerDeploymentResult {
+  txHash: string;
+  contractAddress?: string;
+}
+
 export const useContractDeployment = () => {
-  const { address, isConnected, chainId, switchToGenLayer } = useWalletAuth();
+  const { address, isConnected, switchToGenLayer } = useWalletAuth();
   const [status, setStatus] = useState<DeploymentStatus>({
     step: "idle",
     message: "",
@@ -32,7 +38,7 @@ export const useContractDeployment = () => {
   }, [address]);
 
   const deployPredictionMarket = useCallback(
-    async (params: ContractParams): Promise<string | null> => {
+    async (params: ContractParams): Promise<GenLayerDeploymentResult | null> => {
       if (!isConnected || !address) {
         toast.error("Please connect your wallet first");
         return null;
@@ -65,7 +71,7 @@ export const useContractDeployment = () => {
           message: "Generating Intelligent Contract code...",
         });
 
-        const contractCode = generatePredictionMarketContract(params);
+        const contractCode = generatePredictionMarketContract();
         const constructorArgs = getContractConstructorArgs(params);
         
         console.log("=== GENLAYER DEPLOYMENT ===");
@@ -79,9 +85,11 @@ export const useContractDeployment = () => {
         });
 
         const client = getClient();
+        const account = { address: address as `0x${string}`, type: "json-rpc" as const };
 
         // Use the genlayer-js SDK to deploy the contract
         const transactionHash = await client.deployContract({
+          account,
           code: contractCode,
           args: constructorArgs,
           leaderOnly: false,
@@ -90,10 +98,10 @@ export const useContractDeployment = () => {
         const txHashStr = String(transactionHash);
         console.log("GenLayer TX Hash:", txHashStr);
 
-        // Mark as success immediately after deployment submission
+        // Mark as waiting immediately after deployment submission
         setStatus({
-          step: "success",
-          message: "Contract deployment submitted to GenLayer!",
+          step: "waiting",
+          message: "Waiting for validator acceptance...",
           transactionHash: txHashStr,
         });
 
@@ -110,12 +118,35 @@ export const useContractDeployment = () => {
           },
         });
 
-        return txHashStr;
-      } catch (error: any) {
+        // Wait for acceptance to fetch the contract address
+        let contractAddress: string | undefined;
+        type GenLayerReceipt = { txDataDecoded?: { contractAddress?: string }; recipient?: string };
+        try {
+          const receipt = (await client.waitForTransactionReceipt({
+            hash: txHashStr as `0x${string}`,
+            status: TransactionStatus.ACCEPTED,
+          })) as GenLayerReceipt;
+          contractAddress = receipt?.txDataDecoded?.contractAddress || receipt?.recipient;
+        } catch (waitErr) {
+          console.warn("Could not fetch GenLayer contract address yet:", waitErr);
+        }
+
+        setStatus({
+          step: "success",
+          message: contractAddress
+            ? "Contract deployed to GenLayer!"
+            : "Contract accepted by validators",
+          transactionHash: txHashStr,
+          contractAddress,
+        });
+
+        return { txHash: txHashStr, contractAddress };
+      } catch (error: unknown) {
         console.error("GenLayer deployment error:", error);
 
         // Handle user rejection
-        if (error?.code === 4001 || error?.message?.includes("rejected")) {
+        const err = error as { code?: number | string; message?: string };
+        if (err?.code === 4001 || err?.message?.includes("rejected")) {
           setStatus({
             step: "error",
             message: "Transaction rejected by user",
@@ -128,11 +159,11 @@ export const useContractDeployment = () => {
         setStatus({
           step: "error",
           message: "Deployment failed",
-          error: error?.message || "Unknown error occurred",
+          error: err?.message || "Unknown error occurred",
         });
 
         toast.error("GenLayer deployment failed", {
-          description: error?.message || "Unknown error occurred",
+          description: err?.message || "Unknown error occurred",
         });
 
         return null;

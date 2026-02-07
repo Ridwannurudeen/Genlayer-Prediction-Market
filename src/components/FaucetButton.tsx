@@ -107,7 +107,7 @@ export const FaucetButton = ({
       setTimeout(() => {
         refreshBalance();
       }, 3000);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Faucet error:", error);
       
       // For any error, offer the official faucet as fallback

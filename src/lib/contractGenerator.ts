@@ -10,267 +10,291 @@ export interface ContractParams {
   description: string;
 }
 
-/**
- * Generates a Python Intelligent Contract for a prediction market
- * This contract uses GenLayer's Equivalence Principle for trustless resolution
- */
-export function generatePredictionMarketContract(params: ContractParams): string {
-  // Escape special characters in strings for Python
-  const escapeString = (str: string): string => {
-    return str
-      .replace(/\\/g, "\\\\")
-      .replace(/"/g, '\\"')
-      .replace(/\n/g, "\\n")
-      .replace(/\r/g, "\\r");
-  };
-
-  const question = escapeString(params.question);
-  const endDate = escapeString(params.endDate);
-  const resolutionSource = escapeString(params.resolutionSource);
-  const description = escapeString(params.description);
-
-  return `# { "Depends": "py-genlayer:test" }
+const CONTRACT_CODE = `# { "Depends": "py-genlayer:test" }
 from genlayer import *
 import json
+import typing
 
-@gl.contract
-class PredictionMarket:
+
+class PredictionMarket(gl.Contract):
     """
-    A prediction market contract for GenLayer.
-    Question: ${question}
+    AI-powered prediction market resolution contract.
+
+    Uses GenLayer validators to fetch real-world data and determine
+    market outcomes through LLM consensus.
     """
-    
+
+    # State variables
+    has_resolved: bool
     question: str
     description: str
-    resolution_source: str
     end_date: str
-    creator: str
-    is_resolved: bool
-    winner: int  # -1 = unresolved, 0 = YES wins, 1 = NO wins
-    total_yes_shares: int
-    total_no_shares: int
-    user_shares: TreeMap[str, TreeMap[int, int]]  # user -> outcome -> shares
-    user_deposits: TreeMap[str, int]  # user -> total deposited wei
+    resolution_sources: DynArray[str]
+    outcome: i8  # -1 = pending, 0 = NO, 1 = YES
+    confidence: float
+    resolution_reasoning: str
+    creator: Address
 
-    def __init__(self, question: str, end_date: str, resolution_source: str, description: str):
+    def __init__(
+        self,
+        question: str,
+        description: str,
+        end_date: str,
+        resolution_sources: list
+    ):
+        """
+        Initialize a new prediction market.
+
+        Args:
+            question: The yes/no question to resolve
+            description: Detailed description of resolution criteria
+            end_date: Date after which resolution can occur (ISO string)
+            resolution_sources: List of URLs to check for outcome data
+        """
+        self.has_resolved = False
         self.question = question
         self.description = description
-        self.resolution_source = resolution_source
         self.end_date = end_date
-        self.creator = gl.message.sender_account
-        self.is_resolved = False
-        self.winner = -1
-        self.total_yes_shares = 0
-        self.total_no_shares = 0
-        self.user_shares = TreeMap[str, TreeMap[int, int]]()
-        self.user_deposits = TreeMap[str, int]()
-
-    @gl.public.write.payable
-    def buy_shares(self, outcome_index: int, num_shares: int) -> bool:
-        """
-        Buy shares for a given outcome (0 = YES, 1 = NO).
-        Sends value with the transaction to purchase shares.
-        """
-        if self.is_resolved:
-            raise Exception("Market is already resolved")
-        
-        if outcome_index not in [0, 1]:
-            raise Exception("Invalid outcome index. Use 0 for YES, 1 for NO")
-        
-        if num_shares <= 0:
-            raise Exception("Must buy at least 1 share")
-        
-        sender = gl.message.sender_account
-        value = gl.message.value
-        
-        # Track user's shares
-        if sender not in self.user_shares:
-            self.user_shares[sender] = TreeMap[int, int]()
-            self.user_shares[sender][0] = 0
-            self.user_shares[sender][1] = 0
-        
-        self.user_shares[sender][outcome_index] = self.user_shares[sender][outcome_index] + num_shares
-        
-        # Track deposits
-        if sender not in self.user_deposits:
-            self.user_deposits[sender] = 0
-        self.user_deposits[sender] = self.user_deposits[sender] + value
-        
-        # Update totals
-        if outcome_index == 0:
-            self.total_yes_shares = self.total_yes_shares + num_shares
-        else:
-            self.total_no_shares = self.total_no_shares + num_shares
-        
-        return True
-
-    @gl.public.write
-    def sell_shares(self, outcome_index: int, num_shares: int) -> bool:
-        """
-        Sell shares back to the market.
-        """
-        if self.is_resolved:
-            raise Exception("Market is already resolved")
-        
-        sender = gl.message.sender_account
-        
-        if sender not in self.user_shares:
-            raise Exception("No shares to sell")
-        
-        current_shares = self.user_shares[sender][outcome_index]
-        if current_shares < num_shares:
-            raise Exception("Insufficient shares")
-        
-        self.user_shares[sender][outcome_index] = current_shares - num_shares
-        
-        if outcome_index == 0:
-            self.total_yes_shares = self.total_yes_shares - num_shares
-        else:
-            self.total_no_shares = self.total_no_shares - num_shares
-        
-        return True
-
-    @gl.public.write
-    def resolve(self) -> int:
-        """
-        Resolve the market using GenLayer's Equivalence Principle.
-        Validators will fetch data from the resolution source and use AI to determine the outcome.
-        """
-        if self.is_resolved:
-            raise Exception("Market is already resolved")
-        
-        # Use Equivalence Principle for consensus
-        def determine_outcome() -> int:
-            # Fetch data from the resolution source
-            try:
-                web_data = gl.get_webpage("${resolutionSource}", mode="text")
-            except:
-                web_data = "Unable to fetch data from source"
-            
-            # Create prompt for LLM to analyze
-            prompt = f"""Based on the following information, determine the outcome of this prediction market.
-
-Question: ${question}
-
-Resolution Criteria: ${description}
-
-Data from resolution source (${resolutionSource}):
-{web_data}
-
-Analyze the data and determine if the answer to the question is YES or NO.
-Respond with a JSON object: {{"outcome": 0}} for YES or {{"outcome": 1}} for NO.
-If the outcome cannot be determined yet, respond with {{"outcome": -1}}.
-
-IMPORTANT: Only respond with the JSON object, nothing else."""
-
-            result = gl.exec_prompt(prompt)
-            
-            try:
-                parsed = json.loads(result)
-                return parsed.get("outcome", -1)
-            except:
-                return -1
-        
-        # Use strict equivalence - all validators must agree
-        outcome = gl.eq_principle_strict_eq(determine_outcome)
-        
-        if outcome == -1:
-            raise Exception("Cannot determine outcome yet")
-        
-        self.winner = outcome
-        self.is_resolved = True
-        
-        return outcome
-
-    @gl.public.write
-    def claim_winnings(self) -> int:
-        """
-        Claim winnings after the market is resolved.
-        Returns the amount claimed.
-        """
-        if not self.is_resolved:
-            raise Exception("Market is not resolved yet")
-        
-        sender = gl.message.sender_account
-        
-        if sender not in self.user_shares:
-            raise Exception("No position in this market")
-        
-        winning_shares = self.user_shares[sender][self.winner]
-        
-        if winning_shares <= 0:
-            raise Exception("No winning shares to claim")
-        
-        # Calculate payout - winners split the total pool
-        total_shares = self.total_yes_shares + self.total_no_shares
-        if total_shares == 0:
-            raise Exception("No shares in market")
-        
-        # Calculate total pool from deposits
-        total_pool = 0
-        for user in self.user_deposits:
-            total_pool = total_pool + self.user_deposits[user]
-        
-        # Payout proportional to winning shares
-        winning_total = self.total_yes_shares if self.winner == 0 else self.total_no_shares
-        if winning_total == 0:
-            raise Exception("No winning shares exist")
-        
-        payout = (winning_shares * total_pool) // winning_total
-        
-        # Clear user's shares to prevent double claiming
-        self.user_shares[sender][0] = 0
-        self.user_shares[sender][1] = 0
-        
-        # Transfer winnings
-        gl.transfer(sender, payout)
-        
-        return payout
+        self.resolution_sources = DynArray[str]()
+        for url in resolution_sources:
+            self.resolution_sources.append(url)
+        self.outcome = i8(-1)
+        self.confidence = 0.0
+        self.resolution_reasoning = ""
+        self.creator = gl.message.sender_address
 
     @gl.public.view
-    def get_total_shares(self, outcome_index: int) -> int:
-        """Get total shares for an outcome (0 = YES, 1 = NO)."""
-        if outcome_index == 0:
-            return self.total_yes_shares
-        return self.total_no_shares
-
-    @gl.public.view
-    def get_user_shares(self, user: str, outcome_index: int) -> int:
-        """Get a user's shares for an outcome."""
-        if user not in self.user_shares:
-            return 0
-        return self.user_shares[user][outcome_index]
-
-    @gl.public.view
-    def get_market_info(self) -> dict:
-        """Get market information."""
+    def get_status(self) -> dict:
+        """Get current market status."""
         return {
             "question": self.question,
             "description": self.description,
-            "resolution_source": self.resolution_source,
             "end_date": self.end_date,
-            "creator": self.creator,
-            "is_resolved": self.is_resolved,
-            "winner": self.winner,
-            "total_yes_shares": self.total_yes_shares,
-            "total_no_shares": self.total_no_shares
+            "has_resolved": self.has_resolved,
+            "outcome": int(self.outcome),
+            "outcome_label": self._outcome_to_label(int(self.outcome)),
+            "confidence": self.confidence,
+            "resolution_reasoning": self.resolution_reasoning,
+            "creator": str(self.creator),
+            "resolution_sources": [source for source in self.resolution_sources]
         }
 
     @gl.public.view
-    def get_winner(self) -> int:
-        """Get the winning outcome (-1 if not resolved)."""
-        return self.winner
+    def get_resolution_sources(self) -> list:
+        """Get the list of URLs used for resolution."""
+        return [source for source in self.resolution_sources]
+
+    @gl.public.view
+    def can_resolve(self) -> dict:
+        """Check if market can currently be resolved."""
+        if self.has_resolved:
+            return {
+                "can_resolve": False,
+                "reason": "Market has already been resolved"
+            }
+
+        return {
+            "can_resolve": True,
+            "reason": "Market is ready for resolution"
+        }
+
+    @gl.public.write
+    def resolve(self) -> typing.Any:
+        """
+        Trigger AI-powered market resolution.
+
+        This method:
+        1. Fetches data from all configured resolution sources
+        2. Uses LLM to interpret the data and determine outcome
+        3. Applies Equivalence Principle for validator consensus
+        4. Stores the final outcome on-chain
+
+        Returns:
+            dict: Resolution result including outcome, confidence, and reasoning
+        """
+        if self.has_resolved:
+            return {
+                "success": False,
+                "error": "Market has already been resolved",
+                "outcome": self.outcome,
+                "outcome_label": self._outcome_to_label(self.outcome)
+            }
+
+        if not self.resolution_sources or len(self.resolution_sources) == 0:
+            return {
+                "success": False,
+                "error": "No resolution sources configured"
+            }
+
+        def nondet() -> str:
+            """
+            Non-deterministic function for fetching and processing web data.
+            Executed by multiple validators who must reach consensus.
+            """
+            # Fetch data from all sources
+            source_data = []
+            for i, url in enumerate(self.resolution_sources):
+                try:
+                    web_data = gl.get_webpage(url, mode="text")
+                    source_data.append({
+                        "source_index": i,
+                        "url": url,
+                        "content": web_data[:5000]
+                    })
+                    print(f"Fetched data from source {i}: {url}")
+                except Exception as e:
+                    print(f"Failed to fetch source {i}: {url} - {str(e)}")
+                    source_data.append({
+                        "source_index": i,
+                        "url": url,
+                        "content": f"ERROR: Could not fetch - {str(e)}"
+                    })
+
+            # Format sources for LLM
+            sources_text = "\\n\\n---SOURCE SEPARATOR---\\n\\n".join([
+                f"SOURCE {d['source_index']} ({d['url']}):\\n{d['content']}"
+                for d in source_data
+            ])
+
+            # Construct the resolution prompt
+            task = f"""You are a prediction market resolution oracle. Determine the outcome based on real-world data.
+
+PREDICTION MARKET QUESTION:
+{self.question}
+
+RESOLUTION CRITERIA:
+{self.description}
+
+MARKET END DATE: {self.end_date}
+
+DATA FROM RESOLUTION SOURCES:
+{sources_text}
+
+INSTRUCTIONS:
+1. Analyze all provided source data carefully
+2. Determine if the question should resolve to YES or NO
+3. If data is insufficient or contradictory, return outcome -1
+4. Be conservative - only resolve if you have clear evidence
+
+Respond with ONLY a JSON object:
+{{
+    "outcome": <int>,  // 1 for YES, 0 for NO, -1 if cannot determine
+    "confidence": <float>,  // 0.0 to 1.0
+    "reasoning": "<string>"  // Brief explanation (max 200 chars)
+}}
+
+Your response must be valid JSON only, no markdown, no extra text."""
+
+            result = gl.exec_prompt(task)
+
+            # Clean response
+            result = result.strip()
+            if result.startswith("\`\`\`"):
+                result = result.split("\`\`\`", 2)[1]
+                if result.startswith("json"):
+                    result = result[4:]
+            result = result.strip()
+
+            print(f"LLM Response: {result}")
+
+            parsed = json.loads(result)
+            return json.dumps(parsed, sort_keys=True)
+
+        # Apply equivalence principle for consensus
+        result_str = gl.eq_principle_strict_eq(nondet)
+        result_json = json.loads(result_str)
+
+        if "outcome" not in result_json:
+            return {
+                "success": False,
+                "error": "Invalid resolution result: missing outcome"
+            }
+
+        outcome = int(result_json.get("outcome", -1))
+        confidence = float(result_json.get("confidence", 0.0))
+        reasoning = result_json.get("reasoning", "No reasoning provided")
+
+        # Only finalize with definitive outcome and sufficient confidence
+        if outcome in [0, 1] and confidence >= 0.7:
+            self.has_resolved = True
+            self.outcome = i8(outcome)
+            self.confidence = confidence
+            self.resolution_reasoning = str(reasoning)[:500]
+
+            return {
+                "success": True,
+                "outcome": int(self.outcome),
+                "outcome_label": self._outcome_to_label(int(self.outcome)),
+                "confidence": self.confidence,
+                "reasoning": self.resolution_reasoning,
+                "finalized": True
+            }
+        else:
+            return {
+                "success": True,
+                "outcome": outcome,
+                "outcome_label": self._outcome_to_label(outcome),
+                "confidence": confidence,
+                "reasoning": str(reasoning),
+                "finalized": False,
+                "message": "Outcome uncertain or confidence too low. Try again later."
+            }
+
+    @gl.public.write
+    def add_resolution_source(self, url: str) -> dict:
+        """Add a new resolution source URL (creator only)."""
+        if gl.message.sender_address != self.creator:
+            return {
+                "success": False,
+                "error": "Only the creator can add resolution sources"
+            }
+
+        if self.has_resolved:
+            return {
+                "success": False,
+                "error": "Cannot modify resolved market"
+            }
+
+        if url in self.resolution_sources:
+            return {
+                "success": False,
+                "error": "URL already in resolution sources"
+            }
+
+        self.resolution_sources.append(url)
+
+        return {
+            "success": True,
+            "sources": [source for source in self.resolution_sources]
+        }
+
+    def _outcome_to_label(self, outcome: int) -> str:
+        """Convert numeric outcome to human-readable label."""
+        labels = {
+            -1: "PENDING",
+            0: "NO",
+            1: "YES"
+        }
+        return labels.get(outcome, "UNKNOWN")
 `;
+
+/**
+ * Generates a Python Intelligent Contract for a prediction market
+ */
+export function generatePredictionMarketContract(): string {
+  return CONTRACT_CODE;
 }
 
 /**
  * Generates constructor arguments for contract deployment
  */
-export function getContractConstructorArgs(params: ContractParams): [string, string, string, string] {
+export function getContractConstructorArgs(
+  params: ContractParams
+): [string, string, string, string[]] {
   return [
     params.question,
-    params.endDate,
-    params.resolutionSource,
     params.description,
+    params.endDate,
+    [params.resolutionSource],
   ];
 }

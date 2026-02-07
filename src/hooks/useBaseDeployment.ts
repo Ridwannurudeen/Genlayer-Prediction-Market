@@ -107,11 +107,12 @@ export const useBaseDeployment = () => {
         });
 
         return SETTLEMENT_CONTRACT_ADDRESS;
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Deployment error:", error);
         
-        const errorMessage = error?.message || error?.reason || "Unknown error";
-        const errorCode = error?.code;
+        const err = error as { message?: string; reason?: string; code?: number | string };
+        const errorMessage = err?.message || err?.reason || "Unknown error";
+        const errorCode = err?.code;
         
         if (errorCode === 4001 || errorCode === "ACTION_REJECTED" || errorMessage.includes("rejected") || errorMessage.includes("denied")) {
           setStatus({ step: "error", message: "Deployment cancelled by user", error: "Transaction rejected" });

@@ -67,8 +67,9 @@ export const useHybridDeployment = () => {
         params: [{ chainId: BASE_SEPOLIA.chainIdHex }],
       });
       return true;
-    } catch (error: any) {
-      if (error.code === 4902) {
+    } catch (error: unknown) {
+      const err = error as { code?: number };
+      if (err.code === 4902) {
         await window.ethereum.request({
           method: "wallet_addEthereumChain",
           params: [{
@@ -94,8 +95,9 @@ export const useHybridDeployment = () => {
         params: [{ chainId: GENLAYER.chainIdHex }],
       });
       return true;
-    } catch (error: any) {
-      if (error.code === 4902) {
+    } catch (error: unknown) {
+      const err = error as { code?: number };
+      if (err.code === 4902) {
         await window.ethereum.request({
           method: "wallet_addEthereumChain",
           params: [{
@@ -197,7 +199,7 @@ export const useHybridDeployment = () => {
         txHash: tx.hash,
         success: true,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Base deployment error:", error);
       return { success: false };
     }
@@ -349,25 +351,25 @@ export const useHybridDeployment = () => {
         description: "Please confirm in MetaMask",
       });
 
-      // deployToGenLayer returns string | null (tx hash)
-      const genLayerTxHash = await deployToGenLayer({
+      const genLayerResult = await deployToGenLayer({
         question: params.question,
         description: params.description,
         endDate: params.endDate.toISOString(),
         resolutionSource: params.resolutionSource,
       });
 
-      if (genLayerTxHash) {
-        result.genLayerTxHash = genLayerTxHash;
-        // For GenLayer, the tx hash is often used as the contract identifier
-        result.genLayerContractAddress = genLayerTxHash;
+      if (genLayerResult?.txHash) {
+        result.genLayerTxHash = genLayerResult.txHash;
+        result.genLayerContractAddress = genLayerResult.contractAddress;
         
         setGenLayerStep({
           network: "genlayer",
           status: "success",
-          message: "AI resolution contract deployed!",
-          txHash: genLayerTxHash,
-          contractAddress: genLayerTxHash,
+          message: genLayerResult.contractAddress
+            ? "AI resolution contract deployed!"
+            : "AI resolution contract accepted by validators",
+          txHash: genLayerResult.txHash,
+          contractAddress: genLayerResult.contractAddress,
         });
         toast.success("GenLayer contract deployed!");
       } else {

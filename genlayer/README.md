@@ -15,7 +15,7 @@ Unlike traditional Solidity smart contracts, GenLayer Intelligent Contracts:
 - ✅ **Written in Python** - Using the `genlayer` SDK
 - ✅ **Access the Web** - Fetch real-time data from any URL
 - ✅ **Use AI/LLMs** - Interpret natural language and make decisions
-- ✅ **Consensus via Optimistic Democracy** - Multiple validators agree on outcomes
+- ✅ **Consensus via Equivalence Principle** - Multiple validators agree on outcomes
 
 ## 📝 PredictionMarket Contract
 
@@ -47,15 +47,15 @@ The `PredictionMarket` contract resolves prediction market outcomes by:
 
 ### State Variables
 ```python
-has_resolved: bool      # Whether market has been resolved
-question: str           # The prediction question
-description: str        # Resolution criteria
-end_date: str          # Market end date (YYYY-MM-DD)
-resolution_sources: list # URLs to check for outcome
-outcome: int           # -1=pending, 0=NO, 1=YES
-confidence: float      # AI confidence (0.0-1.0)
+has_resolved: bool        # Whether market has been resolved
+question: str             # The prediction question
+description: str          # Resolution criteria
+end_date: str             # Market end date (YYYY-MM-DD)
+resolution_sources: DynArray[str] # URLs to check for outcome
+outcome: i8               # -1=pending, 0=NO, 1=YES
+confidence: float         # AI confidence (0.0-1.0)
 resolution_reasoning: str # Explanation of decision
-creator: str           # Address that created the market
+creator: Address          # Address that created the market
 ```
 
 ### Example Usage
@@ -98,6 +98,16 @@ result = market.resolve()
 - [Intelligent Contracts Guide](https://docs.genlayer.com/developers/intelligent-contracts/introduction)
 - [Prediction Market Example](https://docs.genlayer.com/developers/intelligent-contracts/examples/prediction)
 - [GenLayer Studio](https://studio.genlayer.com)
+
+## ✅ Smoke Check
+
+Run a quick status verification against a deployed GenLayer contract or tx hash:
+
+```bash
+node scripts/genlayer-status-smoke.mjs --address 0xYOUR_CONTRACT_ADDRESS
+# or
+GENLAYER_TX=0xYOUR_TX_HASH npm run genlayer:smoke
+```
 
 ## ⚠️ Important Notes
 

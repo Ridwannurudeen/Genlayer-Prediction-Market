@@ -34,8 +34,9 @@ export const NetworkIndicator = ({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: BASE_SEPOLIA.chainId }],
       });
-    } catch (error: any) {
-      if (error.code === 4902) {
+    } catch (error: unknown) {
+      const err = error as { code?: number };
+      if (err.code === 4902) {
         await window.ethereum.request({
           method: "wallet_addEthereumChain",
           params: [BASE_SEPOLIA],

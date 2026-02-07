@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { createClient } from "genlayer-js";
 import { testnetAsimov } from "genlayer-js/chains";
+import { TransactionStatus } from "genlayer-js/types";
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
 import { toast } from "sonner";
 
@@ -8,47 +9,58 @@ import { toast } from "sonner";
 export const GENLAYER_TESTNET = {
   chainId: 4221,
   chainIdHex: "0x107d",
-  chainName: "GenLayer Testnet Asimov",
-  rpcUrl: "https://studio.genlayer.com/api/",
+  chainName: "GenLayer Asimov Testnet",
+  rpcUrl: "https://genlayer-testnet.rpc.caldera.xyz/http",
   explorerUrl: "https://explorer-asimov.genlayer.com",
 };
-
-// Contract ABI for reading GenLayer intelligent contracts
-const RESOLVER_ABI = [
-  "function question() view returns (string)",
-  "function description() view returns (string)",
-  "function resolution_source() view returns (string)",
-  "function end_time() view returns (uint256)",
-  "function resolved() view returns (bool)",
-  "function outcome() view returns (uint8)",
-  "function resolution_reasoning() view returns (string)",
-  "function resolve() returns (uint8)",
-  "function get_market_info() view returns (tuple(string,string,string,uint256,address,bool,uint8,string))",
-];
 
 interface GenLayerMarketInfo {
   question: string;
   description: string;
-  resolutionSource: string;
-  endTime: number;
+  endDate: string;
   creator: string;
   resolved: boolean;
   outcome: number;
   reasoning: string;
+  confidence: number;
+  resolutionSources: string[];
 }
 
 interface ResolveResult {
   success: boolean;
+  resolved?: boolean;
   outcome?: number;
   reasoning?: string;
   txHash?: string;
   error?: string;
 }
 
+const parseGenLayerStatus = (status: unknown) => {
+  if (!status || typeof status !== "object") return null;
+
+  const obj = status as Record<string, unknown>;
+  const resolvedRaw = obj.has_resolved ?? obj.resolved ?? obj.is_resolved;
+  const outcomeRaw = obj.outcome ?? -1;
+  const reasoningRaw = obj.resolution_reasoning ?? obj.reasoning ?? "";
+  const sourcesRaw = obj.resolution_sources ?? [];
+
+  return {
+    resolved: Boolean(resolvedRaw),
+    outcome: Number(outcomeRaw),
+    reasoning: String(reasoningRaw || ""),
+    question: String(obj.question ?? ""),
+    description: String(obj.description ?? ""),
+    endDate: String(obj.end_date ?? ""),
+    creator: String(obj.creator ?? ""),
+    confidence: Number(obj.confidence ?? 0),
+    resolutionSources: Array.isArray(sourcesRaw) ? sourcesRaw.map(String) : [],
+  };
+};
+
 export const useGenLayer = () => {
   const { address, isConnected, chainId } = useWalletAuth();
   const [isResolving, setIsResolving] = useState(false);
-  const [isDeploying, setIsDeploying] = useState(false);
+  const [isDeploying, _setIsDeploying] = useState(false);
 
   const isOnGenLayer = chainId === GENLAYER_TESTNET.chainId;
 
@@ -65,9 +77,10 @@ export const useGenLayer = () => {
         params: [{ chainId: GENLAYER_TESTNET.chainIdHex }],
       });
       return true;
-    } catch (switchError: any) {
+    } catch (switchError: unknown) {
       // Chain not added, add it
-      if (switchError.code === 4902) {
+      const err = switchError as { code?: number };
+      if (err.code === 4902) {
         try {
           await window.ethereum.request({
             method: "wallet_addEthereumChain",
@@ -95,13 +108,18 @@ export const useGenLayer = () => {
 
   // Get GenLayer client
   const getClient = useCallback(() => {
-    if (!address) throw new Error("Wallet not connected");
-
     return createClient({
       chain: testnetAsimov,
       endpoint: GENLAYER_TESTNET.rpcUrl,
+      ...(address ? { account: address as `0x${string}` } : {}),
     });
   }, [address]);
+
+  const getJsonRpcAccount = useCallback(() => {
+    if (!address) return undefined;
+    return { address: address as `0x${string}`, type: "json-rpc" as const };
+  }, [address]);
+
 
   // Read market info from GenLayer contract
   const readMarketInfo = useCallback(
@@ -109,23 +127,49 @@ export const useGenLayer = () => {
       try {
         const client = getClient();
 
-        const result = await client.readContract({
+        try {
+          const result = await client.readContract({
+            address: contractAddress as `0x${string}`,
+            functionName: "get_status",
+            args: [],
+            jsonSafeReturn: true,
+          });
+
+          const parsed = parseGenLayerStatus(result);
+          if (parsed) {
+            return {
+              question: parsed.question,
+              description: parsed.description,
+              endDate: parsed.endDate,
+              creator: parsed.creator,
+              resolved: parsed.resolved,
+              outcome: parsed.outcome,
+              reasoning: parsed.reasoning,
+              confidence: parsed.confidence,
+              resolutionSources: parsed.resolutionSources,
+            };
+          }
+        } catch {
+          // Fallback to older contract interface
+        }
+
+        const legacyResult = await client.readContract({
           address: contractAddress as `0x${string}`,
           functionName: "get_market_info",
           args: [],
         });
 
-        // Parse the tuple result
-        if (Array.isArray(result)) {
+        if (Array.isArray(legacyResult)) {
           return {
-            question: result[0] as string,
-            description: result[1] as string,
-            resolutionSource: result[2] as string,
-            endTime: Number(result[3]),
-            creator: result[4] as string,
-            resolved: result[5] as boolean,
-            outcome: Number(result[6]),
-            reasoning: result[7] as string,
+            question: legacyResult[0] as string,
+            description: legacyResult[1] as string,
+            endDate: String(legacyResult[3] ?? ""),
+            creator: String(legacyResult[4] ?? ""),
+            resolved: Boolean(legacyResult[5]),
+            outcome: Number(legacyResult[6]),
+            reasoning: String(legacyResult[7] ?? ""),
+            confidence: 0,
+            resolutionSources: [],
           };
         }
 
@@ -145,6 +189,26 @@ export const useGenLayer = () => {
     ): Promise<{ resolved: boolean; outcome: number; reasoning: string } | null> => {
       try {
         const client = getClient();
+
+        try {
+          const status = await client.readContract({
+            address: contractAddress as `0x${string}`,
+            functionName: "get_status",
+            args: [],
+            jsonSafeReturn: true,
+          });
+
+          const parsed = parseGenLayerStatus(status);
+          if (parsed) {
+            return {
+              resolved: parsed.resolved,
+              outcome: parsed.outcome,
+              reasoning: parsed.reasoning,
+            };
+          }
+        } catch {
+          // Fallback to older contract interface
+        }
 
         const [resolved, outcome, reasoning] = await Promise.all([
           client.readContract({
@@ -200,6 +264,12 @@ export const useGenLayer = () => {
 
       try {
         const client = getClient();
+        const account = getJsonRpcAccount();
+
+        if (!account) {
+          toast.error("Wallet not connected");
+          return { success: false, error: "Wallet not connected" };
+        }
 
         toast.info("Submitting to AI validators...", {
           description: "This may take a few moments",
@@ -207,14 +277,15 @@ export const useGenLayer = () => {
 
         // Call resolve function
         const txHash = await client.writeContract({
+          account,
           address: contractAddress as `0x${string}`,
           functionName: "resolve",
           args: [],
-          value: BigInt(0),
+          value: 0n,
         });
 
-        toast.info("Transaction submitted", {
-          description: "Waiting for validator consensus...",
+        toast.info("Resolution submitted to validators", {
+          description: "Finality can take a few minutes. You can refresh to see the final outcome.",
           action: {
             label: "View TX",
             onClick: () =>
@@ -225,45 +296,57 @@ export const useGenLayer = () => {
           },
         });
 
-        // Wait for transaction
-        const receipt = await client.waitForTransactionReceipt({
+        // Wait for transaction acceptance
+        await client.waitForTransactionReceipt({
           hash: txHash as `0x${string}`,
-          status: "ACCEPTED",
+          status: TransactionStatus.ACCEPTED,
         });
 
         // Get the outcome
         const status = await checkResolutionStatus(contractAddress);
 
-        const outcomeText = status?.outcome === 1 ? "YES" : "NO";
+        if (!status?.resolved) {
+          return {
+            success: true,
+            resolved: false,
+            outcome: status?.outcome,
+            reasoning: status?.reasoning,
+            txHash: txHash as string,
+          };
+        }
+
+        const outcomeText = status.outcome === 1 ? "YES" : "NO";
 
         toast.success(`Market resolved: ${outcomeText}`, {
-          description: status?.reasoning?.slice(0, 100) || "Resolution complete",
+          description: status.reasoning?.slice(0, 100) || "Resolution complete",
         });
 
         return {
           success: true,
-          outcome: status?.outcome,
-          reasoning: status?.reasoning,
+          resolved: true,
+          outcome: status.outcome,
+          reasoning: status.reasoning,
           txHash: txHash as string,
         };
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Resolve market error:", error);
+        const err = error as { code?: number | string; message?: string };
 
-        if (error?.code === 4001 || error?.message?.includes("rejected")) {
+        if (err?.code === 4001 || err?.message?.includes("rejected")) {
           toast.error("Transaction rejected");
           return { success: false, error: "Transaction rejected" };
         }
 
         toast.error("Resolution failed", {
-          description: error?.message || "Unknown error",
+          description: err?.message || "Unknown error",
         });
 
-        return { success: false, error: error?.message };
+        return { success: false, error: err?.message };
       } finally {
         setIsResolving(false);
       }
     },
-    [isConnected, address, isOnGenLayer, getClient, switchToGenLayer, checkResolutionStatus]
+    [isConnected, address, isOnGenLayer, getClient, getJsonRpcAccount, switchToGenLayer, checkResolutionStatus]
   );
 
   // Deploy new GenLayer contract (via GenLayer Studio)
@@ -273,15 +356,15 @@ export const useGenLayer = () => {
       question: string,
       description: string,
       resolutionSource: string,
-      durationDays: number
+      endDate: string
     ) => {
       return {
-        contractCode: "PredictionMarketResolver",
+        contractCode: "PredictionMarket",
         constructorArgs: {
           question,
           description,
-          resolution_source: resolutionSource,
-          duration_days: durationDays,
+          end_date: endDate,
+          resolution_sources: [resolutionSource],
         },
         studioUrl: `https://studio.genlayer.com/contracts/deploy`,
       };

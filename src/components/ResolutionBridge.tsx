@@ -3,9 +3,10 @@ import { ArrowRight, CheckCircle2, Loader2, Zap, Brain, AlertTriangle, ExternalL
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useGenLayer, GENLAYER_TESTNET } from "@/hooks/useGenLayer";
+import { useGenLayer } from "@/hooks/useGenLayer";
 import { useBaseTrading } from "@/hooks/useBaseTrading";
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
+import { toast } from "sonner";
 
 interface ResolutionBridgeProps {
   genLayerContractAddress: string | null | undefined;
@@ -71,12 +72,27 @@ export const ResolutionBridge = ({
   }, [checkStatuses]);
 
   // Handle bridge action
+  const mapGenLayerOutcomeToBase = (outcome: number): number | null => {
+    if (outcome === 1) return 1; // YES
+    if (outcome === 0) return 2; // NO
+    return null;
+  };
+
   const handleBridge = async () => {
     if (!baseContractAddress || !genLayerStatus?.resolved) return;
 
     setIsBridging(true);
+
+    const baseWinner = mapGenLayerOutcomeToBase(genLayerStatus.outcome);
+    if (!baseWinner) {
+      toast.error("Unable to bridge outcome", {
+        description: "GenLayer has not produced a definitive YES/NO outcome yet.",
+      });
+      setIsBridging(false);
+      return;
+    }
     
-    const result = await resolveOnBase(baseContractAddress, genLayerStatus.outcome);
+    const result = await resolveOnBase(baseContractAddress, baseWinner);
     
     if (result.success) {
       // Refresh statuses
@@ -285,7 +301,7 @@ export const ResolutionBridge = ({
 
           <p className="text-xs text-white/50 mb-3">
             {isMarketEnded 
-              ? "Waiting for GenLayer AI to resolve the market first."
+              ? "Waiting for GenLayer AI to resolve the market first. If a resolution was submitted, finality can take a few minutes."
               : "Market must end before resolution can begin."
             }
           </p>

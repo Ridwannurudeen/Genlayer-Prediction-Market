@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { createClient } from "genlayer-js";
 import { testnetAsimov } from "genlayer-js/chains";
+import { TransactionStatus } from "genlayer-js/types";
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
 import { toast } from "sonner";
 
@@ -89,7 +90,7 @@ export const useGenLayerTrading = () => {
         // Wait for transaction to be accepted
         const receipt = await client.waitForTransactionReceipt({
           hash: transactionHash,
-          status: "ACCEPTED" as any,
+          status: TransactionStatus.ACCEPTED,
         });
 
         if (receipt) {
@@ -107,11 +108,12 @@ export const useGenLayerTrading = () => {
           transactionHash,
           status: "pending",
         };
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Trade execution error:", error);
+        const err = error as { code?: number | string; message?: string };
         
         // Handle user rejection
-        if (error?.code === 4001 || error?.message?.includes("rejected")) {
+        if (err?.code === 4001 || err?.message?.includes("rejected")) {
           toast.error("Transaction rejected", {
             description: "You rejected the transaction in your wallet",
           });
@@ -120,7 +122,7 @@ export const useGenLayerTrading = () => {
 
         // Handle other errors
         toast.error("Trade failed", {
-          description: error?.message || "Unknown error occurred",
+          description: err?.message || "Unknown error occurred",
         });
         throw error;
       } finally {
@@ -248,7 +250,7 @@ export const useGenLayerTrading = () => {
 
         await client.waitForTransactionReceipt({
           hash: transactionHash,
-          status: "ACCEPTED" as any,
+          status: TransactionStatus.ACCEPTED,
         });
 
         toast.success("Shares sold!", {
@@ -259,12 +261,13 @@ export const useGenLayerTrading = () => {
           transactionHash,
           status: "accepted",
         };
-      } catch (error: any) {
-        if (error?.code === 4001) {
+      } catch (error: unknown) {
+        const err = error as { code?: number | string; message?: string };
+        if (err?.code === 4001) {
           toast.error("Transaction rejected");
           throw new Error("Transaction rejected by user");
         }
-        toast.error("Sell failed", { description: error?.message });
+        toast.error("Sell failed", { description: err?.message || "Unknown error" });
         throw error;
       } finally {
         setIsPending(false);
@@ -296,7 +299,7 @@ export const useGenLayerTrading = () => {
 
         await client.waitForTransactionReceipt({
           hash: transactionHash,
-          status: "ACCEPTED" as any,
+          status: TransactionStatus.ACCEPTED,
         });
 
         toast.success("Winnings claimed!", {
@@ -307,8 +310,9 @@ export const useGenLayerTrading = () => {
           transactionHash,
           status: "accepted",
         };
-      } catch (error: any) {
-        toast.error("Claim failed", { description: error?.message });
+      } catch (error: unknown) {
+        const err = error as { message?: string };
+        toast.error("Claim failed", { description: err?.message || "Unknown error" });
         throw error;
       } finally {
         setIsPending(false);

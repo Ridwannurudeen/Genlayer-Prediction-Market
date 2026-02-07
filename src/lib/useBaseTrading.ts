@@ -104,8 +104,9 @@ export const useBaseTrading = () => {
           tx = params.positionType === "yes"
             ? await newContract.buyYes({ value })
             : await newContract.buyNo({ value });
-        } catch (newError: any) {
-          console.log("New ABI failed, trying old ABI...", newError.message);
+        } catch (newError: unknown) {
+          const errorInfo = newError as { message?: string };
+          console.log("New ABI failed, trying old ABI...", errorInfo.message);
           
           // Fall back to OLD contract (buyShares)
           const oldContract = new Contract(params.contractAddress, OLD_CONTRACT_ABI, signer);
@@ -133,19 +134,20 @@ export const useBaseTrading = () => {
         });
 
         return { success: true, transactionHash: tx.hash };
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Buy shares error:", error);
+        const err = error as { code?: number | string; reason?: string; message?: string };
 
-        if (error?.code === 4001 || error?.code === "ACTION_REJECTED") {
+        if (err?.code === 4001 || err?.code === "ACTION_REJECTED") {
           toast.error("Transaction rejected");
           return { success: false, error: "Transaction rejected" };
         }
 
         toast.error("Failed to buy shares", {
-          description: error?.reason || error?.message || "Unknown error",
+          description: err?.reason || err?.message || "Unknown error",
         });
 
-        return { success: false, error: error?.message };
+        return { success: false, error: err?.message || "Unknown error" };
       } finally {
         setIsPending(false);
       }
@@ -189,14 +191,16 @@ export const useBaseTrading = () => {
         });
 
         return { success: true, transactionHash: tx.hash };
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Sell shares error:", error);
+        const err = error as { message?: string };
+        const message = err?.message || "Unknown error";
 
         toast.error("Failed to sell shares", {
-          description: error?.message || "Unknown error",
+          description: message,
         });
 
-        return { success: false, error: error?.message };
+        return { success: false, error: message };
       } finally {
         setIsPending(false);
       }
@@ -238,14 +242,16 @@ export const useBaseTrading = () => {
         toast.success("Winnings claimed!");
 
         return { success: true, transactionHash: tx.hash };
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error("Claim winnings error:", error);
+        const err = error as { message?: string };
+        const message = err?.message || "Unknown error";
 
         toast.error("Failed to claim winnings", {
-          description: error?.message || "Unknown error",
+          description: message,
         });
 
-        return { success: false, error: error?.message };
+        return { success: false, error: message };
       } finally {
         setIsPending(false);
       }

@@ -3,7 +3,7 @@ import { Sparkles, Loader2, CheckCircle2, XCircle, ExternalLink, Cpu } from "luc
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useGenLayer, GENLAYER_TESTNET } from "@/hooks/useGenLayer";
+import { useGenLayer } from "@/hooks/useGenLayer";
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
 
 interface GenLayerResolutionProps {
@@ -32,6 +32,7 @@ export const GenLayerResolution = ({
     outcome: number;
     reasoning: string;
   } | null>(null);
+  const [pendingTxHash, setPendingTxHash] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const isMarketEnded = new Date(marketEndDate) < new Date();
@@ -49,8 +50,11 @@ export const GenLayerResolution = ({
       const status = await checkResolutionStatus(contractAddress);
       if (status) {
         setResolutionStatus(status);
-        if (status.resolved && onResolved) {
-          onResolved(status.outcome, status.reasoning);
+        if (status.resolved) {
+          setPendingTxHash(null);
+          if (onResolved) {
+            onResolved(status.outcome, status.reasoning);
+          }
         }
       }
       setIsLoading(false);
@@ -143,14 +147,16 @@ export const GenLayerResolution = ({
           </div>
           <Badge variant="outline" className="text-xs text-purple-600 border-purple-500/30">
             <Cpu className="h-3 w-3 mr-1" />
-            Pending
+            {pendingTxHash ? "Submitted" : "Pending"}
           </Badge>
         </div>
 
         <p className="text-xs text-muted-foreground mb-3">
-          {isMarketEnded
-            ? "Market has ended. Trigger AI resolution to determine the outcome."
-            : "AI validators will determine the outcome after the market ends."}
+          {pendingTxHash
+            ? "Resolution submitted to GenLayer validators. Finality typically takes a few minutes after market end."
+            : isMarketEnded
+            ? "Market has ended. Submit AI resolution to determine the outcome. Finality typically takes a few minutes."
+            : "AI validators will determine the outcome after the market ends. Once submitted, finality typically takes a few minutes."}
         </p>
 
         {canResolve && (
@@ -174,15 +180,18 @@ export const GenLayerResolution = ({
                 size="sm"
                 onClick={async () => {
                   const result = await resolveMarket(contractAddress);
-                  if (result.success && result.outcome !== undefined) {
+                  if (result.success && result.resolved && result.outcome !== undefined) {
                     setResolutionStatus({
                       resolved: true,
                       outcome: result.outcome,
                       reasoning: result.reasoning || "",
                     });
+                    setPendingTxHash(null);
                     if (onResolved) {
                       onResolved(result.outcome, result.reasoning || "");
                     }
+                  } else if (result.success && result.txHash) {
+                    setPendingTxHash(result.txHash);
                   }
                 }}
                 disabled={isResolving}
@@ -208,14 +217,26 @@ export const GenLayerResolution = ({
           <span className="text-xs text-muted-foreground">
             Contract: {contractAddress.slice(0, 8)}...{contractAddress.slice(-6)}
           </span>
-          <a
-            href={`${explorerUrl}/address/${contractAddress}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-purple-600 hover:text-purple-700"
-          >
-            <ExternalLink className="h-3 w-3" />
-          </a>
+          {pendingTxHash ? (
+            <a
+              href={`${explorerUrl}/tx/${pendingTxHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-purple-600 hover:text-purple-700 flex items-center gap-1"
+            >
+              Submission TX
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ) : (
+            <a
+              href={`${explorerUrl}/address/${contractAddress}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-purple-600 hover:text-purple-700"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
         </div>
       </CardContent>
     </Card>

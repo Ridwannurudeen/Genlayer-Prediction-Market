@@ -12,7 +12,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useMarketResolution } from "@/hooks/useMarketResolution";
+import { useMarketResolution, type MarketResolutionData } from "@/hooks/useMarketResolution";
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +40,7 @@ export const MarketResolution = ({
   
   const [selectedOutcome, setSelectedOutcome] = useState<"yes" | "no" | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [resolutionData, setResolutionData] = useState<any>(null);
+  const [resolutionData, setResolutionData] = useState<MarketResolutionData | null>(null);
 
   const isCreator = address && creatorAddress && 
     address.toLowerCase() === creatorAddress.toLowerCase();

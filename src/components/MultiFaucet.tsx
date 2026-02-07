@@ -66,7 +66,7 @@ export const MultiFaucet = ({ className }: MultiFaucetProps) => {
       });
 
       setTimeout(() => refreshBalance(), 3000);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast.error("Faucet request failed", {
         description: "Try the official GenLayer faucet",
         action: {
@@ -110,9 +110,10 @@ export const MultiFaucet = ({ className }: MultiFaucetProps) => {
         });
         window.open(firstFaucet.url, "_blank");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown error";
       toast.error("Faucet request failed", {
-        description: error.message,
+        description: message,
       });
     } finally {
       setIsRequesting(null);

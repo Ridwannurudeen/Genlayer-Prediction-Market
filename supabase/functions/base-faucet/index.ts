@@ -10,6 +10,18 @@ interface FaucetRequest {
   token?: "ETH" | "USDC";
 }
 
+type FaucetEndpoint = {
+  type: "redirect";
+  url: string;
+  description: string;
+};
+
+type FaucetInfo = {
+  name: string;
+  endpoints: FaucetEndpoint[];
+  contractAddress?: string;
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -34,7 +46,7 @@ serve(async (req) => {
     }
 
     // Base Sepolia faucet endpoints
-    const faucetInfo = {
+    const faucetInfo: Record<"ETH" | "USDC", FaucetInfo> = {
       ETH: {
         name: "Base Sepolia ETH",
         endpoints: [
@@ -86,7 +98,7 @@ serve(async (req) => {
         chainId: 84532,
         faucets: tokenInfo.endpoints,
         message: `Please use one of the official ${tokenInfo.name} faucets below`,
-        contractAddress: (tokenInfo as any).contractAddress || null,
+        contractAddress: tokenInfo.contractAddress ?? null,
         explorerUrl: `https://sepolia.basescan.org/address/${address}`,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }

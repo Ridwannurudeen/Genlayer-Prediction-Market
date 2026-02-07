@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useWalletAuth, formatAddress } from "@/contexts/WalletAuthContext";
-import { usePositions, useTrades } from "@/hooks/usePositions";
+import { usePositions, useTrades, type Trade } from "@/hooks/usePositions";
 import { WalletModal } from "@/components/WalletModal";
 import { MultiFaucet } from "@/components/MultiFaucet";
 import { Wallet, TrendingUp, TrendingDown, Clock, ArrowRight, Zap, Copy, Check, Brain, ExternalLink } from "lucide-react";
@@ -247,7 +247,7 @@ const Portfolio = () => {
               <p className="text-muted-foreground">Loading...</p>
             ) : trades && trades.length > 0 ? (
               <div className="space-y-2">
-                {trades.map((trade: any) => (
+                {trades.map((trade: Trade) => (
                   <div
                     key={trade.id}
                     className="flex items-center justify-between py-2 border-b border-border last:border-0"

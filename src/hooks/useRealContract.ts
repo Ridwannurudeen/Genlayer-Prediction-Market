@@ -142,7 +142,7 @@ export const useRealContract = () => {
         const receipt = await tx.wait();
         
         // Parse the MarketCreated event
-        const event = receipt.logs.find((log: any) => {
+        const event = receipt.logs.find((log) => {
           try {
             const parsed = factory.interface.parseLog(log);
             return parsed?.name === "MarketCreated";
@@ -174,10 +174,11 @@ export const useRealContract = () => {
           marketId,
           txHash: tx.hash,
         };
-      } catch (err: any) {
-        const errorMessage = err?.message || "Unknown error";
+      } catch (err: unknown) {
+        const errorInfo = err as { message?: string; code?: number | string };
+        const errorMessage = errorInfo?.message || "Unknown error";
         
-        if (err.code === 4001 || errorMessage.includes("rejected")) {
+        if (errorInfo.code === 4001 || errorMessage.includes("rejected")) {
           setError("Transaction cancelled");
           return { success: false, error: "Cancelled by user" };
         }
@@ -247,10 +248,11 @@ export const useRealContract = () => {
           txHash: tx.hash,
           shares,
         };
-      } catch (err: any) {
-        const errorMessage = err?.message || "Unknown error";
+      } catch (err: unknown) {
+        const errorInfo = err as { message?: string; code?: number | string };
+        const errorMessage = errorInfo?.message || "Unknown error";
         
-        if (err.code === 4001 || errorMessage.includes("rejected")) {
+        if (errorInfo.code === 4001 || errorMessage.includes("rejected")) {
           setError("Transaction cancelled");
           return { success: false, error: "Cancelled by user" };
         }
@@ -331,10 +333,11 @@ export const useRealContract = () => {
           success: true,
           txHash: tx.hash,
         };
-      } catch (err: any) {
-        const errorMessage = err?.message || "Unknown error";
+      } catch (err: unknown) {
+        const errorInfo = err as { message?: string; code?: number | string };
+        const errorMessage = errorInfo?.message || "Unknown error";
         
-        if (err.code === 4001 || errorMessage.includes("rejected")) {
+        if (errorInfo.code === 4001 || errorMessage.includes("rejected")) {
           return { success: false, error: "Cancelled by user" };
         }
 
@@ -417,10 +420,11 @@ export const useRealContract = () => {
           txHash: tx.hash,
           amount: claimableEth,
         };
-      } catch (err: any) {
-        const errorMessage = err?.message || "Unknown error";
+      } catch (err: unknown) {
+        const errorInfo = err as { message?: string; code?: number | string };
+        const errorMessage = errorInfo?.message || "Unknown error";
         
-        if (err.code === 4001 || errorMessage.includes("rejected")) {
+        if (errorInfo.code === 4001 || errorMessage.includes("rejected")) {
           return { success: false, error: "Cancelled by user" };
         }
 

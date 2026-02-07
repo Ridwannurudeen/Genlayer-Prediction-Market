@@ -24,6 +24,22 @@ export interface PositionWithMarket extends Position {
   };
 }
 
+export interface Trade {
+  id: string;
+  user_id: string;
+  market_id: string;
+  trade_type: "buy" | "sell";
+  position_type: "yes" | "no";
+  shares: number;
+  price: number;
+  total_amount: number;
+  created_at: string;
+  market?: {
+    id: string;
+    title: string;
+  };
+}
+
 export const usePositions = () => {
   const { address, isConnected } = useWalletAuth();
 
@@ -50,7 +66,7 @@ export const usePositions = () => {
 export const useTrades = () => {
   const { address, isConnected } = useWalletAuth();
 
-  return useQuery({
+  return useQuery<Trade[]>({
     queryKey: ["trades", address],
     queryFn: async () => {
       if (!address) return [];
@@ -66,7 +82,7 @@ export const useTrades = () => {
         .limit(50);
 
       if (error) throw error;
-      return data;
+      return data as Trade[];
     },
     enabled: isConnected && !!address,
   });

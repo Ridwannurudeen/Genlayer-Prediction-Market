@@ -180,11 +180,12 @@ export const useMarketFactory = () => {
           marketId,
           txHash: tx.hash,
         };
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Deploy market error:", err);
         
-        const errorMessage = err?.message || "Unknown error";
-        const errorCode = err?.code;
+        const errorInfo = err as { message?: string; code?: number | string };
+        const errorMessage = errorInfo?.message || "Unknown error";
+        const errorCode = errorInfo?.code;
 
         toast.dismiss();
 

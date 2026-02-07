@@ -28,6 +28,7 @@ import {
 import { useWalletAuth } from "@/contexts/WalletAuthContext";
 import { useContractDeployment } from "@/hooks/useContractDeployment";
 import { useHybridDeployment } from "@/hooks/useHybridDeployment";
+import { useGenLayerBackfill } from "@/hooks/useGenLayerBackfill";
 import { DeploymentStatus } from "@/components/DeploymentStatus";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -89,6 +90,7 @@ const CreateMarket = () => {
   const isOnBase = chainId === 84532;
   const { deployPredictionMarket, status: deploymentStatus, resetStatus, isDeploying } = useContractDeployment();
   const { deployHybrid, isDeploying: isHybridDeploying, baseStep, genLayerStep, resetSteps, switchToBase } = useHybridDeployment();
+  const { backfillContractAddress } = useGenLayerBackfill();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const [deployOnChain, setDeployOnChain] = useState(true); // GenLayer
@@ -119,6 +121,7 @@ const CreateMarket = () => {
     try {
       let intelligentContractAddress: string | null = null;
       let baseContractAddress: string | null = null;
+      let genLayerTxHash: string | null = null;
 
       // Deploy to both networks if enabled
       if (deployOnChain || deployToBaseSepolia) {
@@ -140,28 +143,41 @@ const CreateMarket = () => {
 
         baseContractAddress = result.baseContractAddress || null;
         intelligentContractAddress = result.genLayerContractAddress || null;
+        genLayerTxHash = result.genLayerTxHash || null;
       }
 
       // Create market record in database
-      const { data: newMarket, error } = await supabase.from("markets").insert({
-        title: data.title,
-        description: data.description,
-        category: data.category,
-        end_date: new Date(data.endDate).toISOString(),
-        resolution_source: data.resolutionSource,
-        probability: data.initialProbability,
-        created_by: address,
-        deployer_wallet: (deployOnChain || deployToBaseSepolia) ? address : null,
-        verified: deployOnChain || deployToBaseSepolia,
-        resolution_status: "open",
-        validator_count: deployOnChain ? 5 : 0,
-        volume: 0,
-        intelligent_contract_address: intelligentContractAddress,
-        base_contract_address: baseContractAddress,
-        network: deployToBaseSepolia ? "base_sepolia" : (deployOnChain ? "genlayer" : "simulated"),
-      }).select().single();
+        const { data: newMarket, error } = await supabase.from("markets").insert({
+          title: data.title,
+          description: data.description,
+          category: data.category,
+          end_date: new Date(data.endDate).toISOString(),
+          resolution_source: data.resolutionSource,
+          probability: data.initialProbability,
+          created_by: address,
+          deployer_wallet: (deployOnChain || deployToBaseSepolia) ? address : null,
+          verified: deployOnChain || deployToBaseSepolia,
+          resolution_status: "open",
+          validator_count: deployOnChain ? 5 : 0,
+          volume: 0,
+          intelligent_contract_address: intelligentContractAddress,
+          genlayer_resolution_address: genLayerTxHash,
+          base_contract_address: baseContractAddress,
+          network: deployToBaseSepolia ? "base_sepolia" : (deployOnChain ? "genlayer" : "simulated"),
+        }).select().single();
 
       if (error) throw error;
+
+      if (genLayerTxHash && !intelligentContractAddress) {
+        void backfillContractAddress(
+          {
+            id: newMarket.id,
+            intelligent_contract_address: intelligentContractAddress,
+            genlayer_resolution_address: genLayerTxHash,
+          },
+          { maxAttempts: 2, delayMs: 15000, timeoutMs: 12000 }
+        );
+      }
 
       // Build success message
       let successMsg = "Market created";
@@ -170,8 +186,9 @@ const CreateMarket = () => {
       toast.success(successMsg + "!");
 
       navigate(`/market/${newMarket.id}`);
-    } catch (error: any) {
-      toast.error(error.message || "Failed to create market");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to create market";
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }

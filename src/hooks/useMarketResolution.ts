@@ -20,7 +20,7 @@ interface ClaimWinningsParams {
   userAddress: string;
 }
 
-interface MarketResolutionData {
+export interface MarketResolutionData {
   totalYesShares: number;
   totalNoShares: number;
   totalPool: number;
@@ -210,8 +210,9 @@ export const useMarketResolution = () => {
           }
 
           txHash = tx.hash;
-        } catch (err: any) {
-          if (err.code === 4001 || err.message?.includes("rejected")) {
+        } catch (err: unknown) {
+          const errorInfo = err as { code?: number | string; message?: string };
+          if (errorInfo.code === 4001 || errorInfo.message?.includes("rejected")) {
             throw new Error("Transaction cancelled");
           }
           console.error("Blockchain resolution error:", err);
@@ -279,7 +280,10 @@ export const useMarketResolution = () => {
         throw new Error("Winnings already claimed");
       }
 
-      const market = position.markets as any;
+      const market = position.markets as {
+        resolution_status?: string;
+        resolved_outcome?: "yes" | "no" | null;
+      };
       if (market.resolution_status !== "resolved") {
         throw new Error("Market not resolved yet");
       }
@@ -316,8 +320,9 @@ export const useMarketResolution = () => {
           }
 
           txHash = tx.hash;
-        } catch (err: any) {
-          if (err.code === 4001 || err.message?.includes("rejected")) {
+        } catch (err: unknown) {
+          const errorInfo = err as { code?: number | string; message?: string };
+          if (errorInfo.code === 4001 || errorInfo.message?.includes("rejected")) {
             throw new Error("Transaction cancelled");
           }
           throw err;
